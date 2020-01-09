@@ -85,14 +85,14 @@ static short dct_table1[DCTSIZE2] = { M1, M1, M1, M1, M1, M1, M1, M1 };
 #endif
 
 static const char zigzag_refresh[DCTSIZE2] = {
-  0, 0, 1, 0, 1, 0, 1, 0,
-  1, 0, 0, 0, 0, 0, 0, 1,
-  0, 0, 0, 0, 0, 0, 0, 0,
-  1, 0, 0, 0, 0, 0, 0, 1,
-  0, 0, 0, 0, 0, 0, 0, 0,
-  1, 0, 0, 0, 0, 0, 0, 1,
-  0, 0, 0, 0, 0, 0, 0, 0,
-  1, 0, 1, 0, 1, 0, 1, 1,
+	0, 0, 1, 0, 1, 0, 1, 0,
+	1, 0, 0, 0, 0, 0, 0, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	1, 0, 0, 0, 0, 0, 0, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	1, 0, 0, 0, 0, 0, 0, 1,
+	0, 0, 0, 0, 0, 0, 0, 0,
+	1, 0, 1, 0, 1, 0, 1, 1,
 };
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, int stride) {
@@ -272,21 +272,21 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 }
 
 static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int flags) {
-  JDIMENSION comp_width, comp_height, blk_y;
-  int ci, qtblno;
-  JSAMPROW image; int stride;
-  jpeg_component_info *compptr;
-  JQUANT_TBL *qtbl;
+	JDIMENSION comp_width, comp_height, blk_y;
+	int ci, qtblno;
+	JSAMPROW image; int stride;
+	jpeg_component_info *compptr;
+	JQUANT_TBL *qtbl;
 
-  for (ci = 0; ci < srcinfo->num_components; ci++) {
-    compptr = srcinfo->comp_info + ci;
+	for (ci = 0; ci < srcinfo->num_components; ci++) {
+		compptr = srcinfo->comp_info + ci;
 		stride = (srcinfo->max_h_samp_factor * DCTSIZE) / compptr->h_samp_factor;
-    comp_width = (srcinfo->image_width + stride - 1) / stride;
+		comp_width = (srcinfo->image_width + stride - 1) / stride;
 		comp_height = compptr->height_in_blocks;
 
-    qtblno = compptr->quant_tbl_no;
-    if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
-    qtbl = srcinfo->quant_tbl_ptrs[qtblno];
+		qtblno = compptr->quant_tbl_no;
+		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
+		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
 
 		// skip already processed
 		{
@@ -313,27 +313,27 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-		  for (blk_y = 0; blk_y < comp_height; blk_y += compptr->v_samp_factor) {
+			for (blk_y = 0; blk_y < comp_height; blk_y += compptr->v_samp_factor) {
 				JDIMENSION offset_y, blk_x;
 				JDIMENSION height = comp_height - blk_y;
 				if (height > compptr->v_samp_factor) height = compptr->v_samp_factor;
 
-		    JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-		      ((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
-		       (JDIMENSION) compptr->v_samp_factor, TRUE);
+				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+					((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
+					(JDIMENSION) compptr->v_samp_factor, TRUE);
 
-		    for (offset_y = 0; offset_y < height; offset_y++) {
-		      for (blk_x = 0; blk_x < comp_width; blk_x++) {
-		        JCOEFPTR coef = buffer[offset_y][blk_x]; int x;
+				for (offset_y = 0; offset_y < height; offset_y++) {
+					for (blk_x = 0; blk_x < comp_width; blk_x++) {
+						JCOEFPTR coef = buffer[offset_y][blk_x]; int x;
 						if (!iter)
 							for (x = 0; x < DCTSIZE2; x++) coef[x] *= qtbl->quantval[x];
 #ifdef USE_JSIMD
 						int output_col = IMAGEPTR - image;
 #endif
 						idct_islow(coef, IMAGEPTR, stride);
-		      }
-		    }
-		  }
+					}
+				}
+			}
 
 			{
 				int y, w = comp_width * DCTSIZE, h = comp_height * DCTSIZE;
@@ -348,52 +348,52 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-		  for (blk_y = 0; blk_y < compptr->height_in_blocks; blk_y += compptr->v_samp_factor) {
+			for (blk_y = 0; blk_y < compptr->height_in_blocks; blk_y += compptr->v_samp_factor) {
 				JDIMENSION offset_y, blk_x;
 				JDIMENSION height = comp_height - blk_y;
 				if (height > compptr->v_samp_factor) height = compptr->v_samp_factor;
 
-		    JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-		      ((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
-		       (JDIMENSION) compptr->v_samp_factor, TRUE);
+				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+					((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
+					(JDIMENSION) compptr->v_samp_factor, TRUE);
 
-		    for (offset_y = 0; offset_y < height; offset_y++) {
-		      for (blk_x = 0; blk_x < comp_width; blk_x++) {
-		        JCOEFPTR coef = buffer[offset_y][blk_x];
+				for (offset_y = 0; offset_y < height; offset_y++) {
+					for (blk_x = 0; blk_x < comp_width; blk_x++) {
+						JCOEFPTR coef = buffer[offset_y][blk_x];
 						quantsmooth_block(coef, qtbl->quantval, IMAGEPTR, stride);
-		      }
-		    }
-		  }
+					}
+				}
+			}
 		} // iter
 #undef IMAGEPTR
 		free(image);
-  }
+	}
 }
 
 static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, int flags) {
-  int ci, qtblno, x, y;
-  jpeg_component_info *compptr;
-  JQUANT_TBL *qtbl, *c_quant;
+	int ci, qtblno, x, y;
+	jpeg_component_info *compptr;
+	JQUANT_TBL *qtbl, *c_quant;
 
 #ifdef WITH_LOG
 	if (flags & 1)
-  for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
-    qtblno = compptr->quant_tbl_no;
+	for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
+		qtblno = compptr->quant_tbl_no;
 		logfmt("component[%i] : table %i, samp %ix%i\n", ci, qtblno, compptr->h_samp_factor, compptr->v_samp_factor);
-    /* Make sure specified quantization table is present */
-    if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
+		/* Make sure specified quantization table is present */
+		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
 	}
 
 	if (flags & 2)
-  for (qtblno = 0; qtblno < NUM_QUANT_TBLS; qtblno++) {
-    qtbl = srcinfo->quant_tbl_ptrs[qtblno];
+	for (qtblno = 0; qtblno < NUM_QUANT_TBLS; qtblno++) {
+		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
 		if (!qtbl) continue;
 		logfmt("quant[%i]:\n", qtblno);
 
 		for (y = 0; y < DCTSIZE; y++) {
 			for (x = 0; x < DCTSIZE; x++) {
 				logfmt("%04x ", qtbl->quantval[y * DCTSIZE + x]);
-		  }
+			}
 			logfmt("\n");
 		}
 	}
@@ -414,17 +414,17 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arra
 #endif
 	}
 
-  for (qtblno = 0; qtblno < NUM_QUANT_TBLS; qtblno++) {
-    qtbl = srcinfo->quant_tbl_ptrs[qtblno];
+	for (qtblno = 0; qtblno < NUM_QUANT_TBLS; qtblno++) {
+		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
 		if (!qtbl) continue;
 		for (x = 0; x < DCTSIZE2; x++) qtbl->quantval[x] = 1;
 	}
 
-  for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
-    qtblno = compptr->quant_tbl_no;
-    if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
-    qtbl = srcinfo->quant_tbl_ptrs[qtblno];
-    c_quant = compptr->quant_table;
-    if (c_quant) memcpy(c_quant, qtbl, sizeof(qtbl->quantval));
+	for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
+		qtblno = compptr->quant_tbl_no;
+		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
+		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
+		c_quant = compptr->quant_table;
+		if (c_quant) memcpy(c_quant, qtbl, sizeof(qtbl->quantval));
 	}
 }

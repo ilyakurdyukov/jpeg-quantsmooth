@@ -22,31 +22,31 @@
  */
 
 static const char jpeg_natural_order[DCTSIZE2] = {
-  0,  1,  8, 16,  9,  2,  3, 10,
- 17, 24, 32, 25, 18, 11,  4,  5,
- 12, 19, 26, 33, 40, 48, 41, 34,
- 27, 20, 13,  6,  7, 14, 21, 28,
- 35, 42, 49, 56, 57, 50, 43, 36,
- 29, 22, 15, 23, 30, 37, 44, 51,
- 58, 59, 52, 45, 38, 31, 39, 46,
- 53, 60, 61, 54, 47, 55, 62, 63
+	 0,  1,  8, 16,  9,  2,  3, 10,
+	17, 24, 32, 25, 18, 11,  4,  5,
+	12, 19, 26, 33, 40, 48, 41, 34,
+	27, 20, 13,  6,  7, 14, 21, 28,
+	35, 42, 49, 56, 57, 50, 43, 36,
+	29, 22, 15, 23, 30, 37, 44, 51,
+	58, 59, 52, 45, 38, 31, 39, 46,
+	53, 60, 61, 54, 47, 55, 62, 63
 };
 
 static JSAMPLE range_limit_static[5 * (MAXJSAMPLE+1) + CENTERJSAMPLE];
 
 static void range_limit_init() {
 	int i;
-  JSAMPLE *table = range_limit_static;
+	JSAMPLE *table = range_limit_static;
 
-  memset(table, 0, (MAXJSAMPLE+1) * sizeof(JSAMPLE));
-  table += (MAXJSAMPLE+1);
-  for (i = 0; i <= MAXJSAMPLE; i++) table[i] = i;
-  table += CENTERJSAMPLE;       /* Point to where post-IDCT table starts */
-  /* End of simple table, rest of first half of post-IDCT table */
-  for (i = CENTERJSAMPLE; i < 2*(MAXJSAMPLE+1); i++) table[i] = MAXJSAMPLE;
-  /* Second half of post-IDCT table */
-  memset(table + 2 * (MAXJSAMPLE+1), 0, (2 * (MAXJSAMPLE+1) - CENTERJSAMPLE) * sizeof(JSAMPLE));
-  memcpy(table + 4 * (MAXJSAMPLE+1) - CENTERJSAMPLE, table - CENTERJSAMPLE, CENTERJSAMPLE * sizeof(JSAMPLE));
+	memset(table, 0, (MAXJSAMPLE+1) * sizeof(JSAMPLE));
+	table += (MAXJSAMPLE+1);
+	for (i = 0; i <= MAXJSAMPLE; i++) table[i] = i;
+	table += CENTERJSAMPLE;       /* Point to where post-IDCT table starts */
+	/* End of simple table, rest of first half of post-IDCT table */
+	for (i = CENTERJSAMPLE; i < 2*(MAXJSAMPLE+1); i++) table[i] = MAXJSAMPLE;
+	/* Second half of post-IDCT table */
+	memset(table + 2 * (MAXJSAMPLE+1), 0, (2 * (MAXJSAMPLE+1) - CENTERJSAMPLE) * sizeof(JSAMPLE));
+	memcpy(table + 4 * (MAXJSAMPLE+1) - CENTERJSAMPLE, table - CENTERJSAMPLE, CENTERJSAMPLE * sizeof(JSAMPLE));
 }
 
 #define CONST_BITS  13

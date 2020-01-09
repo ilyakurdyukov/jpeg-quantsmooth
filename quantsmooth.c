@@ -67,7 +67,7 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 void jpeg_init_source(j_decompress_ptr cinfo) { }
 boolean jpeg_fill_input_buffer(j_decompress_ptr cinfo) { return FALSE; }
 void jpeg_skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
-  struct jpeg_source_mgr *src = cinfo->src;
+	struct jpeg_source_mgr *src = cinfo->src;
 	if (num_bytes > src->bytes_in_buffer) num_bytes = src->bytes_in_buffer;
 	src->next_input_byte += (size_t)num_bytes;
 	src->bytes_in_buffer -= (size_t)num_bytes;
@@ -77,8 +77,8 @@ void jpeg_term_source(j_decompress_ptr cinfo) { }
 
 #ifdef MEM_OUTPUT
 struct jpeg_dest_mem {
-  struct jpeg_destination_mgr pub; /* public fields */
-  uint8_t *buffer; size_t size, bufsize, maxchunk;
+	struct jpeg_destination_mgr pub; /* public fields */
+	uint8_t *buffer; size_t size, bufsize, maxchunk;
 };
 
 static void jpeg_init_destination(j_compress_ptr cinfo) {
@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
 #ifdef MEM_INPUT
 	size_t input_size = 0;
 	uint8_t *input_mem = NULL;
-  struct jpeg_source_mgr src_mgr = { 0 };
+	struct jpeg_source_mgr src_mgr = { 0 };
 #else
 	FILE *input_file = stdin;
 #endif
@@ -237,8 +237,8 @@ int main(int argc, char **argv) {
 	srcinfo.mem->max_memory_to_use = dstinfo.mem->max_memory_to_use;
 
 #ifdef WASM
-  input_mem = (uint8_t*)params[1];
-  input_size = params[2];
+	input_mem = (uint8_t*)params[1];
+	input_size = params[2];
 #else
 	fn = argv[1];
 #endif
@@ -259,8 +259,8 @@ int main(int argc, char **argv) {
 	src_mgr.skip_input_data = jpeg_skip_input_data;
 	src_mgr.resync_to_restart = jpeg_resync_to_restart; /* use default method */
 	src_mgr.term_source = jpeg_term_source;
-  src_mgr.next_input_byte = (const JOCTET*)input_mem;
-  src_mgr.bytes_in_buffer = input_size;
+	src_mgr.next_input_byte = (const JOCTET*)input_mem;
+	src_mgr.bytes_in_buffer = input_size;
 #endif
 #else
 	if (strcmp(fn, "-")) {
