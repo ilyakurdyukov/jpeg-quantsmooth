@@ -30,11 +30,11 @@ Print debug info from quantsmooth (on by default, set to 0 to disable).
 Note: Images 4x zoomed.
 <p align="center"><b>
 Original image:<br>
-<img src="https://raw.githubusercontent.com/ilyakurdyukov/jpeg-quantsmooth/images/lena_orig.png"><br>
+<img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/lena_orig.png"><br>
 Jpeg with 70% quality:<br>
-<img src="https://raw.githubusercontent.com/ilyakurdyukov/jpeg-quantsmooth/images/lena_70jpg.png"><br>
+<img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/lena_70jpg.png"><br>
 After processing:<br>
-<img src="https://raw.githubusercontent.com/ilyakurdyukov/jpeg-quantsmooth/images/lena_70new.png"><br>
+<img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/lena_70new.png"><br>
 </b></p>
 
 ## Buliding on Linux
