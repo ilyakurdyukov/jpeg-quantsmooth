@@ -2,6 +2,8 @@
 /* jconfig.cfg --- source file edited by configure script */
 /* see jconfig.doc for explanations */
 
+#define NO_GETENV
+
 #ifndef XMD_H
 #define XMD_H
 #include <stdint.h>

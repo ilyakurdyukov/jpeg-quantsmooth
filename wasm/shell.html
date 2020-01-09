@@ -89,18 +89,21 @@ var output_data = null;
 
 function cbProcess(input) {
 	var cmdline = document.getElementById("cmdline").value;
-	var cmd_size = cmdline.length + 1;
+	var cmd_size = cmdline.length;
 
 	var inp_size = input.byteLength;
-	var prm_addr = Module._malloc(5*8 + inp_size + cmd_size);
+	var prm_addr = Module._malloc(5*8 + inp_size + cmd_size + 1);
 	Module.HEAPU8.set(new Uint8Array(5*8), prm_addr);
 	var inp_addr = prm_addr + 5*8;
 	var cmd_addr = prm_addr + 5*8 + inp_size;
 
 	Module.HEAPU8.set(new Uint8Array(input), inp_addr);
 
-	for (var i = 0; i < cmd_size; i++)
-		Module.HEAPU8[cmd_addr + i] = cmdline.charCodeAt(i); 
+	for (var i = 0; i < cmd_size; i++) {
+		var c = cmdline.charCodeAt(i);
+		if (c > 127) c = '?'.charCodeAt(0);
+		Module.HEAPU8[cmd_addr + i] = c; 
+	}
 	Module.HEAPU8[cmd_addr + cmd_size] = 0;
 
 	Module.print("Imput size: " + inp_size);

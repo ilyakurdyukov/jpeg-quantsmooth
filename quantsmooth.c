@@ -28,6 +28,13 @@
 #define WASM
 #endif
 
+#ifdef WASM_MAIN
+#ifndef __EMSCRIPTEN__
+#define EMSCRIPTEN_KEEPALIVE
+#define WASM
+#endif
+#endif
+
 #include "jpeglib.h"
 
 #ifdef WASM
@@ -45,7 +52,7 @@
 #endif
 
 #ifdef MEM_INPUT
-#ifndef WASM
+#if !defined(WASM) || defined(WASM_MAIN)
 static uint8_t* loadfile(const char *fn, size_t *num) {
 	size_t n, j = 0; uint8_t *buf = 0;
 	FILE *fi = fopen(fn, "rb");
@@ -173,7 +180,7 @@ int main(int argc, char **argv) {
 	int optimize = 0, verbose_level = 0, smooth_info = 0xf;
 #ifdef WASM
 	int argc = 0;
-	char **argv = make_argv(cmdline, &argc);
+	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
 #else
 	const char *progname = "quantsmooth", *fn;
 #endif
@@ -199,7 +206,7 @@ int main(int argc, char **argv) {
 	}
 
 #ifdef WASM
-	free(argv);
+	free(argv_ptr);
 	if (argc != 1) {
 		logfmt("Unrecognized command line option.\n");
 		return 1;
@@ -312,7 +319,7 @@ int main(int argc, char **argv) {
 	if (input_file != stdin) fclose(input_file);
 #endif
 #ifdef WASM
-	params[3] = (int64_t)dest_mgr.buffer;
+	params[3] = (intptr_t)dest_mgr.buffer;
 	params[4] = dest_mgr.size;
 #else
 #ifdef MEM_OUTPUT
@@ -333,3 +340,76 @@ int main(int argc, char **argv) {
 
 	return jsrcerr.num_warnings + jdsterr.num_warnings ? 2 : 0;
 }
+
+// for testing purposes
+#ifdef WASM_MAIN
+int main(int argc, char **argv) {
+	int64_t params[5]; int i, n, ret;
+	char *cmdline = NULL; size_t cmd_size = 1;
+	const char *progname = "quantsmooth", *fn;
+	uint8_t *input_mem; size_t input_size;
+
+	for (n = 1; n < argc; ) {
+		const char *str = argv[n];
+		if (str[0] != '-') break;
+		if (str[1] != '-') break;
+		n++;
+		if (str[2] == 0) break;
+		cmd_size += strlen(str) + 3;
+	}
+	cmdline = malloc(cmd_size);
+	if (!cmdline) return 1;
+
+	cmd_size = 0;
+	for (i = 1; i < n; i++) {
+		const char *str = argv[i];
+		int len = strlen(str);
+		cmdline[cmd_size++] = '"';
+		memcpy(cmdline + cmd_size, str, len);
+		cmd_size += len;
+		cmdline[cmd_size++] = '"';
+		cmdline[cmd_size++] = ' ';
+	}
+	cmdline[cmd_size] = 0;
+	params[0] = (intptr_t)cmdline;
+
+	// printf("cmdline: %s\n", cmdline);
+
+	argv += n - 1;
+	argc -= n - 1;
+
+	if (argc != 3) {
+		logfmt("Unrecognized command line.\n");
+		return 1;
+	}
+
+	fn = argv[1];
+	input_mem = loadfile(fn, &input_size);
+	if (!input_mem) {
+		logfmt("%s: can't open input file \"%s\"\n", progname, fn);
+		return 1;
+	}
+	params[1] = (intptr_t)input_mem;
+	params[2] = input_size;
+	params[3] = 0;
+	params[4] = 0;
+	ret = web_process(params);
+	free(input_mem);
+
+	if (params[3]) {
+		FILE *output_file;
+		fn = argv[2];
+		if ((output_file = fopen(fn, "wb")) == NULL) {
+			logfmt("%s: can't open output file \"%s\"\n", progname, fn);
+			return 1;
+		}
+		fwrite((void*)params[3], 1, (size_t)params[4], output_file);
+		fclose(output_file);
+		free((void*)params[3]);
+	}
+
+	if (cmdline) free(cmdline);
+	return ret;
+}
+#endif
+
