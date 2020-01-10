@@ -338,7 +338,7 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 			{
 				int y, w = comp_width * DCTSIZE, h = comp_height * DCTSIZE;
 				memcpy(image, image + stride, stride);
-				for (y = 1; y < h-1; y++) {
+				for (y = 1; y < h+1; y++) {
 					image[y*stride] = image[y*stride+1];
 					image[y*stride+w+1] = image[y*stride+w];
 				}
