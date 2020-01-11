@@ -34,6 +34,16 @@ static inline int64_t get_time_usec() {
 #if defined(__SSE4_1__)
 #define USE_SSE4
 #include <smmintrin.h>
+#elif defined(__SSE2__)
+#define USE_SSE2
+#include <emmintrin.h>
+
+#define _mm_cvtepu8_epi16(a) _mm_unpacklo_epi8(a, _mm_setzero_si128())
+// _mm_cmplt_epi16(a, _mm_setzero_si128()) or _mm_srai_epi16(a, 15)
+#define _mm_cvtepi16_epi32(a) _mm_unpacklo_epi16(a, _mm_srai_epi16(a, 15))
+#define _mm_abs_epi16(a) ({ \
+	__m128i __tmp = _mm_srai_epi16(a, 15); \
+	_mm_xor_si128(_mm_add_epi16(a, __tmp), __tmp); })
 #endif
 
 #ifdef __AVX2__
@@ -74,7 +84,7 @@ static void quantsmooth_init() {
 
 // When compiling with libjpeg-turbo and static linking, you can use
 // optimized idct_islow from library. Which will be faster if you don't have
-// processor with AVX2 support, but SSE4 is supported.
+// processor with AVX2 support, but SSE2 is supported.
 
 #if defined(USE_JSIMD) && defined(LIBJPEG_TURBO_VERSION)
 EXTERN(void) jsimd_idct_islow_sse2(void *dct_table, JCOEFPTR coef_block, JSAMPARRAY output_buf, JDIMENSION output_col);
@@ -144,7 +154,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #if 1 && defined(USE_AVX2)
 #define M1_INIT \
 	__m128i v0, v1, v5; \
-	__m256 f0, f1, f4, f7 = _mm256_set1_ps(halfx); __m128 f2;
+	__m256 f0, f1, f4, f7 = _mm256_set1_ps(halfx);
 
 #define M1(tab) \
 	f4 = _mm256_load_ps(tab); \
@@ -155,27 +165,37 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	f1 = _mm256_mul_ps(f0, f4); \
 	f0 = _mm256_mul_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0))); \
 	f0 = _mm256_mul_ps(f0, f1); f1 = _mm256_mul_ps(f1, f1); \
-	f0 = _mm256_hadd_ps(f0, f1); \
-	f0 = _mm256_hadd_ps(f0, f0); \
-	f2 = _mm_add_ps(_mm256_castps256_ps128(f0), _mm256_extractf128_ps(f0, 1)); \
-	a2 += _mm_cvtss_f32(f2); \
-	a3 += _mm_cvtss_f32(_mm_shuffle_ps(f2, f2, 0x55));
-#define M4
+	f0 = _mm256_add_ps(_mm256_permute2f128_ps(f0, f1, 0x20), _mm256_permute2f128_ps(f0, f1, 0x31)); \
+	f0 = _mm256_hadd_ps(f0, f0); f0 = _mm256_hadd_ps(f0, f0); \
+	a2 += _mm256_cvtss_f32(f0); \
+	a3 += _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
 
-#elif 1 && defined(USE_SSE4)
+#elif 1 && (defined(USE_SSE4) || defined(USE_SSE2))
+
+#ifdef USE_SSE4
+#define M11 \
+	f0 = _mm_hadd_ps(_mm_add_ps(f0, f2), _mm_add_ps(f1, f3)); \
+	f0 = _mm_hadd_ps(f0, f0);
+#else
+#define M11 \
+	f0 = _mm_add_ps(f0, f2); f1 = _mm_add_ps(f1, f3); \
+	f0 = _mm_add_ps(_mm_unpacklo_ps(f0, f1), _mm_unpackhi_ps(f0, f1)); \
+	f0 = _mm_add_ps(f0, _mm_shuffle_ps(f0, f0, 0xee));
+#endif
+
 #define M1_INIT \
 	__m128i v0, v1, v5, v7 = _mm_setzero_si128(); \
 	__m128 f0, f1, f2, f3, f4_lo, f4_hi, f7 = _mm_set1_ps(halfx);
 #define M1(tab) \
 	f4_lo = _mm_load_ps(tab); f4_hi = _mm_load_ps(tab+4); \
 	v5 = _mm_abs_epi16(v0); \
-	M4(lo, f0, f1, v0) \
-	M4(hi, f2, f3, _mm_bsrli_si128(v0, 8)) \
-	f0 = _mm_hadd_ps(_mm_hadd_ps(f0, f2), _mm_hadd_ps(f1, f3)); \
-	f0 = _mm_hadd_ps(f0, f0); \
+	M10(lo, f0, f1, v0) \
+	M10(hi, f2, f3, _mm_bsrli_si128(v0, 8)) \
+	M11 \
 	a2 += _mm_cvtss_f32(f0); \
 	a3 += _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
-#define M4(lo, f0, f1, v0) \
+
+#define M10(lo, f0, f1, v0) \
 	f0 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)); \
 	f0 = _mm_sub_ps(f7, _mm_min_ps(f0, f7)); \
 	f0 = _mm_mul_ps(f0, f0); \
@@ -190,11 +210,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 
 		{
 			M1_INIT
-			__m128i v6 = _mm_setr_epi8(2,3, 4,5, 6,7, 8,9, 10,11, 12,13, 14,15, 14,15);
 
 			for (y = 0; y < DCTSIZE; y++) {
 				v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE]));
-				v0 = _mm_sub_epi16(v0, _mm_shuffle_epi8(v0, v6));
+				v0 = _mm_sub_epi16(v0, _mm_bsrli_si128(v0, 2));
 				M1(tab+64+y*DCTSIZE)
 			}
 
@@ -226,7 +245,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		}
 #undef M1_INIT
 #undef M1
-#undef M4
+#ifdef M10
+#undef M10
+#undef M11
+#endif
 #else
 #define M1(xx, yy, i) \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
