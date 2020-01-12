@@ -189,10 +189,19 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 	x4 = _mm256_packus_epi16(x4, x5);
 	v0 = _mm256_unpacklo_epi32(x0, x4);
 	v1 = _mm256_unpackhi_epi32(x0, x4);
+#if 1 && defined(__x86_64__)
 #define M1(i, v0, j) *(int64_t*)&outptr[stride*i] = _mm256_extract_epi64(v0, j);
 	M1(0, v0, 0) M1(1, v0, 1) M1(2, v1, 0) M1(3, v1, 1)
 	M1(4, v0, 2) M1(5, v0, 3) M1(6, v1, 2) M1(7, v1, 3)
 #undef M1
+#else
+#define M1(i, v0, l) _mm_store##l##_pd((double*)&outptr[i*stride], _mm_castsi128_pd(_mm256_castsi256_si128(v0)));
+#define M2(i, v0, l) _mm_store##l##_pd((double*)&outptr[i*stride], _mm_castsi128_pd(_mm256_extracti128_si256(v0, 1)));
+	M1(0, v0, l) M1(1, v0, h) M1(2, v1, l) M1(3, v1, h)
+	M2(4, v0, l) M2(5, v0, h) M2(6, v1, l) M2(7, v1, h)
+#undef M2
+#undef M1
+#endif
 #elif 1 && defined(USE_SSE2)
 	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
 

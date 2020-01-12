@@ -22,6 +22,19 @@
 #endif
 
 #ifdef WITH_LOG
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+// conflict with libjpeg typedef
+#define INT32 INT32_WIN
+#include <windows.h>
+static inline int64_t get_time_usec() {
+	LARGE_INTEGER freq, perf;
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&perf);
+	double d = (double)perf.QuadPart * 1000000.0 / (double)freq.QuadPart;
+	return d;
+}
+#else
 #include <time.h>
 #include <sys/time.h>
 static inline int64_t get_time_usec() {
@@ -30,6 +43,8 @@ static inline int64_t get_time_usec() {
 	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
 }
 #endif
+#endif
+
 
 #if defined(__SSE4_1__)
 #define USE_SSE2
