@@ -32,6 +32,7 @@ static inline int64_t get_time_usec() {
 #endif
 
 #if defined(__SSE4_1__)
+#define USE_SSE2
 #define USE_SSE4
 #include <smmintrin.h>
 #elif defined(__SSE2__)
@@ -137,9 +138,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	int flag = 1;
 
 	for (k = DCTSIZE2-1; k > 0; k--) {
-		float *tab, a0, a1, a2, a3, halfx;
+		float *tab, a0, a1, a2, a3;
 		int p0, p1, i = jpeg_natural_order[k];
-		halfx = quantval[i] * 0.125f * 16;
+		int range = quantval[i] * 2;
+
 		tab = quantsmooth_tables[i][0];
 		a2 = a3 = 0;
 #if 1
@@ -149,79 +151,74 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		}
 #endif
 
-#define M2(a) { float x = halfx-fabsf(a); if (x < 0) x = 0; x *= x; a *= x; a1 *= x; }
-
 #if 1 && defined(USE_AVX2)
-#define M1_INIT \
-	__m128i v0, v1, v5; \
-	__m256 f0, f1, f4, f7 = _mm256_set1_ps(halfx);
+#define VINIT \
+	__m128i v0, v1, v5, v6 = _mm_set1_epi16(range); \
+	__m256 f0, f1, f4, vsum = _mm256_setzero_ps();
 
-#define M1(tab) \
+#define VCORE(tab) \
 	f4 = _mm256_load_ps(tab); \
-	v5 = _mm_abs_epi16(v0); \
-	f0 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(v5)); \
-	f0 = _mm256_sub_ps(f7, _mm256_min_ps(f0, f7)); \
+	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v0)); \
+	f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v5)); \
 	f0 = _mm256_mul_ps(f0, f0); \
 	f1 = _mm256_mul_ps(f0, f4); \
 	f0 = _mm256_mul_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0))); \
 	f0 = _mm256_mul_ps(f0, f1); f1 = _mm256_mul_ps(f1, f1); \
 	f0 = _mm256_add_ps(_mm256_permute2f128_ps(f0, f1, 0x20), _mm256_permute2f128_ps(f0, f1, 0x31)); \
+	vsum = _mm256_add_ps(vsum, f0);
+
+#define VFIN \
+	f0 = vsum; \
 	f0 = _mm256_hadd_ps(f0, f0); f0 = _mm256_hadd_ps(f0, f0); \
-	a2 += _mm256_cvtss_f32(f0); \
-	a3 += _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
+	a2 = _mm256_cvtss_f32(f0); \
+	a3 = _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
 
-#elif 1 && (defined(USE_SSE4) || defined(USE_SSE2))
+#elif 1 && defined(USE_SSE2)
+#define VINIT \
+	__m128i v0, v1, v2, v5, v6 = _mm_set1_epi16(range), v7 = _mm_setzero_si128(); \
+	__m128 f0, f1, f2, f3, f4_lo, f4_hi; \
+	__m128 vsum1 = _mm_setzero_ps(), vsum2 = vsum1;
 
-#ifdef USE_SSE4
-#define M11 \
-	f0 = _mm_hadd_ps(_mm_add_ps(f0, f2), _mm_add_ps(f1, f3)); \
-	f0 = _mm_hadd_ps(f0, f0);
-#else
-#define M11 \
-	f0 = _mm_add_ps(f0, f2); f1 = _mm_add_ps(f1, f3); \
-	f0 = _mm_add_ps(_mm_unpacklo_ps(f0, f1), _mm_unpackhi_ps(f0, f1)); \
-	f0 = _mm_add_ps(f0, _mm_shuffle_ps(f0, f0, 0xee));
-#endif
-
-#define M1_INIT \
-	__m128i v0, v1, v5, v7 = _mm_setzero_si128(); \
-	__m128 f0, f1, f2, f3, f4_lo, f4_hi, f7 = _mm_set1_ps(halfx);
-#define M1(tab) \
+#define VCORE(tab) \
 	f4_lo = _mm_load_ps(tab); f4_hi = _mm_load_ps(tab+4); \
-	v5 = _mm_abs_epi16(v0); \
-	M10(lo, f0, f1, v0) \
-	M10(hi, f2, f3, _mm_bsrli_si128(v0, 8)) \
-	M11 \
-	a2 += _mm_cvtss_f32(f0); \
-	a3 += _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
+	v2 = _mm_srai_epi16(v0, 15); \
+	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v0)); \
+	VCORE1(lo, f0, f1) VCORE1(hi, f2, f3) \
+	vsum1 = _mm_add_ps(vsum1, _mm_add_ps(f0, f2)); \
+	vsum2 = _mm_add_ps(vsum2, _mm_add_ps(f1, f3));
 
-#define M10(lo, f0, f1, v0) \
+#define VCORE1(lo, f0, f1) \
 	f0 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)); \
-	f0 = _mm_sub_ps(f7, _mm_min_ps(f0, f7)); \
 	f0 = _mm_mul_ps(f0, f0); \
 	f1 = _mm_mul_ps(f0, f4_##lo); \
-	f0 = _mm_mul_ps(f0, _mm_cvtepi32_ps(_mm_cvtepi16_epi32(v0))); \
+	f0 = _mm_mul_ps(f0, _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v2))); \
 	f0 = _mm_mul_ps(f0, f1); f1 = _mm_mul_ps(f1, f1);
 
+#define VFIN \
+	f0 = vsum1; f1 = vsum2; \
+	f0 = _mm_add_ps(_mm_unpacklo_ps(f0, f1), _mm_unpackhi_ps(f0, f1)); \
+	f0 = _mm_add_ps(f0, _mm_shuffle_ps(f0, f0, 0xee)); \
+	a2 = _mm_cvtss_f32(f0); \
+	a3 = _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
 #endif
 
-#ifdef M1_INIT
+#ifdef VINIT
 		(void)p1; (void)a1; // suppress unused-variable warnings
 
 		{
-			M1_INIT
+			VINIT
 
 			for (y = 0; y < DCTSIZE; y++) {
 				v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE]));
 				v0 = _mm_sub_epi16(v0, _mm_bsrli_si128(v0, 2));
-				M1(tab+64+y*DCTSIZE)
+				VCORE(tab+64+y*DCTSIZE)
 			}
 
 			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[0]));
 			for (y = 0; y < DCTSIZE-1; y++) {
 				v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE+DCTSIZE]));
 				v0 = _mm_sub_epi16(v0, v1);
-				M1(tab+64*2+y*DCTSIZE)
+				VCORE(tab+64*2+y*DCTSIZE)
 				v0 = v1;
 			}
 
@@ -229,7 +226,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE])); \
 	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(yy)*stride])); \
 	v0 = _mm_sub_epi16(v0, v1); \
-	M1(tab+y*DCTSIZE)
+	VCORE(tab+y*DCTSIZE)
 			M5(0, -1) M5(7, 8)
 #undef M5
 
@@ -239,17 +236,20 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 			for (y = 0; y < DCTSIZE; y++) { M5(0, -1, y, y) M5(7, 8, y, y+8) }
 #undef M5
 			v0 = _mm_load_si128((void*)&tmp0[0]);
-			M1(tmp1)
+			VCORE(tmp1)
 			v0 = _mm_load_si128((void*)&tmp0[8]);
-			M1(tmp1+8)
+			VCORE(tmp1+8)
+
+			VFIN
 		}
-#undef M1_INIT
-#undef M1
-#ifdef M10
-#undef M10
-#undef M11
+#undef VINIT
+#undef VCORE
+#ifdef VCORE
+#undef VCORE1
 #endif
+#undef VFIN
 #else
+#define M2(a) { float x = (float)range-fabsf(a); if (x < 0) x = 0; x *= x; a *= x; a1 *= x; }
 #define M1(xx, yy, i) \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
 	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; \
@@ -268,10 +268,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		x = 0; for (y = 0; y < DCTSIZE; y++) { M1(x-1,y) }
 		x = DCTSIZE-1; for (y = 0; y < DCTSIZE; y++) { M1(x+1,y) }
 #undef M1
+#undef M2
 #endif
 
 		a0 = a2 / a3;
-#undef M2
 
 		{
 			int div = quantval[i];

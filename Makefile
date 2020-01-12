@@ -1,5 +1,5 @@
 
-CFLAGS ?= -Wall -O3 -march=native -fopenmp
+CFLAGS ?= -Wall -O2 -march=native -fopenmp
 LIBS ?= -ljpeg -lm
 
 .PHONY: clean all
