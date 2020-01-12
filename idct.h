@@ -1,5 +1,5 @@
 /*
- * idct_islow AVX2 intrinsic optimization:
+ * idct_islow SSE2/AVX2 intrinsic optimization:
  * Copyright (C) 2016-2020 Kurdyukov Ilya
  *
  * contains modified parts of libjpeg:
@@ -193,6 +193,77 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 	M1(0, v0, 0) M1(1, v0, 1) M1(2, v1, 0) M1(3, v1, 1)
 	M1(4, v0, 2) M1(5, v0, 3) M1(6, v1, 2) M1(7, v1, 3)
 #undef M1
+#elif 1 && defined(USE_SSE2)
+	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
+
+	__m128i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m128i tmp0, tmp1, tmp2, tmp3;
+	__m128i tmp10, tmp11, tmp12, tmp13;
+	__m128i z1, z2, z3, z4, z5;
+
+#define ADD _mm_add_epi32
+#define SUB _mm_sub_epi32
+#ifdef USE_SSE4
+#define MUL _mm_mullo_epi32
+#define SET1 _mm_set1_epi32
+#else
+// lazy hack, values for multiply is a 16 bit
+#define MUL _mm_madd_epi16
+#define SET1(a) _mm_set1_epi32(a & 0xffff)
+#endif
+#define SHL _mm_slli_epi32
+
+	t0 = _mm_set1_epi32(1 << (CONST_BITS-PASS1_BITS-1));
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
+#define M1(i) _mm_cvtepi16_epi32(_mm_loadl_epi64((void*)&coef_block[DCTSIZE*i+ctr]))
+#define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = _mm_srai_epi32(ADD(tmp, t0), CONST_BITS-PASS1_BITS);
+		M3
+#undef M1
+#undef M2
+	}
+
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 8, outptr += 4*stride) {
+#define M1(i) v##i = wsptr[i];
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = _mm_unpacklo_epi32(v0, v2); \
+t1 = _mm_unpacklo_epi32(v1, v3); \
+x0 = _mm_unpacklo_epi32(t0, t1); \
+x1 = _mm_unpackhi_epi32(t0, t1); \
+t0 = _mm_unpackhi_epi32(v0, v2); \
+t1 = _mm_unpackhi_epi32(v1, v3); \
+x2 = _mm_unpacklo_epi32(t0, t1); \
+x3 = _mm_unpackhi_epi32(t0, t1);
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+
+#define M1(i) x##i
+#define M2(i, tmp) v##i = _mm_srai_epi32(ADD(tmp, t0), (CONST_BITS+PASS1_BITS+3));
+		t0 = _mm_set1_epi32((256+1) << (CONST_BITS+PASS1_BITS+3-1));
+		M3
+#undef M1
+#undef M2
+
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M4
+
+		x0 = _mm_packs_epi32(x0, x1);
+		x1 = _mm_packs_epi32(x2, x3);
+		x4 = _mm_packs_epi32(x4, x5);
+		x5 = _mm_packs_epi32(x6, x7);
+		x0 = _mm_packus_epi16(x0, x1);
+		x4 = _mm_packus_epi16(x4, x5);
+		v0 = _mm_unpacklo_epi32(x0, x4);
+		v1 = _mm_unpackhi_epi32(x0, x4);
+#define M1(i, v0, l) _mm_store##l##_pd((double*)&outptr[i*stride], _mm_castsi128_pd(v0));
+		M1(0, v0, l) M1(1, v0, h) M1(2, v1, l) M1(3, v1, h)
+#undef M1
+	}
 #else
 	int32_t tmp0, tmp1, tmp2, tmp3;
 	int32_t tmp10, tmp11, tmp12, tmp13;

@@ -317,9 +317,12 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 			if (a <= 1) continue;
 		}
 
-		stride = comp_width * DCTSIZE + 2;
-		image = (JSAMPROW)malloc((comp_height * DCTSIZE + 2) * stride * sizeof(JSAMPLE));
+		// keeping block pointers aligned
+		stride = comp_width * DCTSIZE + 8;
+		image = (JSAMPROW)malloc(((comp_height * DCTSIZE + 2) * stride + 8) * sizeof(JSAMPLE));
 		if (!image) continue;
+		image += 7;
+
 #ifdef WITH_LOG
 		if (flags & 4) logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
@@ -388,7 +391,7 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 			}
 		} // iter
 #undef IMAGEPTR
-		free(image);
+		free(image - 7);
 	}
 }
 
