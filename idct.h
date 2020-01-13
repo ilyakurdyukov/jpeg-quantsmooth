@@ -1,5 +1,5 @@
 /*
- * idct_islow SSE2/AVX2 intrinsic optimization:
+ * idct_islow SSE2/AVX2/NEON intrinsic optimization:
  * Copyright (C) 2016-2020 Kurdyukov Ilya
  *
  * contains modified parts of libjpeg:
@@ -90,7 +90,7 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 #define M3 \
 	z2 = M1(2); z3 = M1(6); \
 	z1 = MUL(ADD(z2, z3), SET1(FIX_0_541196100)); \
-	tmp2 = ADD(z1, MUL(z3, SET1(- FIX_1_847759065))); \
+	tmp2 = SUB(z1, MUL(z3, SET1(FIX_1_847759065))); \
 	tmp3 = ADD(z1, MUL(z2, SET1(FIX_0_765366865))); \
 	z2 = M1(0); z3 = M1(4); \
 	tmp0 = SHL(ADD(z2, z3), CONST_BITS); \
@@ -111,16 +111,16 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	tmp1 = MUL(tmp1, SET1(FIX_2_053119869)); /* sqrt(2) * ( c1+c3-c5+c7) */ \
 	tmp2 = MUL(tmp2, SET1(FIX_3_072711026)); /* sqrt(2) * ( c1+c3+c5-c7) */ \
 	tmp3 = MUL(tmp3, SET1(FIX_1_501321110)); /* sqrt(2) * ( c1+c3-c5-c7) */ \
-	z1 = MUL(z1, SET1(- FIX_0_899976223)); /* sqrt(2) * (c7-c3) */ \
-	z2 = MUL(z2, SET1(- FIX_2_562915447)); /* sqrt(2) * (-c1-c3) */ \
-	z3 = MUL(z3, SET1(- FIX_1_961570560)); /* sqrt(2) * (-c3-c5) */ \
-	z4 = MUL(z4, SET1(- FIX_0_390180644)); /* sqrt(2) * (c5-c3) */ \
-	z3 = ADD(z3, z5); \
-	z4 = ADD(z4, z5); \
-	tmp0 = ADD(tmp0, ADD(z1, z3)); \
-	tmp1 = ADD(tmp1, ADD(z2, z4)); \
-	tmp2 = ADD(tmp2, ADD(z2, z3)); \
-	tmp3 = ADD(tmp3, ADD(z1, z4)); \
+	z1 = MUL(z1, SET1(FIX_0_899976223)); /* sqrt(2) * (c7-c3) */ \
+	z2 = MUL(z2, SET1(FIX_2_562915447)); /* sqrt(2) * (-c1-c3) */ \
+	z3 = MUL(z3, SET1(FIX_1_961570560)); /* sqrt(2) * (-c3-c5) */ \
+	z4 = MUL(z4, SET1(FIX_0_390180644)); /* sqrt(2) * (c5-c3) */ \
+	z3 = SUB(z5, z3); \
+	z4 = SUB(z5, z4); \
+	tmp0 = ADD(tmp0, SUB(z3, z1)); \
+	tmp1 = ADD(tmp1, SUB(z4, z2)); \
+	tmp2 = ADD(tmp2, SUB(z3, z2)); \
+	tmp3 = ADD(tmp3, SUB(z4, z1)); \
 \
 	M2(0, ADD(tmp10, tmp3)) \
 	M2(7, SUB(tmp10, tmp3)) \
@@ -131,7 +131,83 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	M2(3, ADD(tmp13, tmp0)) \
 	M2(4, SUB(tmp13, tmp0))
 
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+	int ctr; int32x4_t *wsptr, workspace[DCTSIZE2] ALIGN(16);
+
+	int32x4_t tmp0, tmp1, tmp2, tmp3;
+	int32x4_t tmp10, tmp11, tmp12, tmp13;
+	int32x4_t z1, z2, z3, z4, z5;
+
+#define ADD vaddq_s32
+#define SUB vsubq_s32
+#if 0
+	static const int32_t tab[12] = {
+		FIX_0_298631336, FIX_0_390180644, FIX_0_541196100, FIX_0_765366865,
+		FIX_0_899976223, FIX_1_175875602, FIX_1_501321110, FIX_1_847759065,
+		FIX_1_961570560, FIX_2_053119869, FIX_2_562915447, FIX_3_072711026 };
+	int32x4_t t1 = vld1q_s32(tab), t2 = vld1q_s32(tab + 4), t3 = vld1q_s32(tab + 8);
+
+#define IDCT_FIX_0_298631336 vget_low_s32(t1), 0
+#define IDCT_FIX_0_390180644 vget_low_s32(t1), 1
+#define IDCT_FIX_0_541196100 vget_high_s32(t1), 0
+#define IDCT_FIX_0_765366865 vget_high_s32(t1), 1
+#define IDCT_FIX_0_899976223 vget_low_s32(t2), 0
+#define IDCT_FIX_1_175875602 vget_low_s32(t2), 1
+#define IDCT_FIX_1_501321110 vget_high_s32(t2), 0
+#define IDCT_FIX_1_847759065 vget_high_s32(t2), 1
+#define IDCT_FIX_1_961570560 vget_low_s32(t3), 0
+#define IDCT_FIX_2_053119869 vget_low_s32(t3), 1
+#define IDCT_FIX_2_562915447 vget_high_s32(t3), 0
+#define IDCT_FIX_3_072711026 vget_high_s32(t3), 1
+
+#define MUL(a, b) vmulq_lane_s32(a, b)
+#define SET1(a) IDCT_##a
+#else
+#define MUL vmulq_s32
+#define SET1 vdupq_n_s32
+#endif
+#define SHL vshlq_n_s32
+
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
+#define M1(i) vmovl_s16(vld1_s16((void*)&coef_block[DCTSIZE*i+ctr]))
+#define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = vrshrq_n_s32(tmp, CONST_BITS-PASS1_BITS);
+		M3
+#undef M1
+#undef M2
+	}
+
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 8, outptr += 4*stride) {
+		int32x4x4_t q0 = vld4q_s32((int32_t*)&wsptr[0]), q1 = vld4q_s32((int32_t*)&wsptr[4]);
+#define M1(i, n) int32x4_t x##i = q##n.val[i & 3];
+		M1(0, 0) M1(1, 0) M1(2, 0) M1(3, 0) M1(4, 1) M1(5, 1) M1(6, 1) M1(7, 1)
+#undef M1
+
+#define M1(i) x##i
+#define M2(i, tmp) x##i = tmp;
+		M3
+#undef M1
+#undef M2
+
+		{
+			int8x8_t t0 = vdup_n_s8(-128);
+#define M1(i, j) int8x8_t v##i = vqrshrn_n_s16(vuzpq_s16( \
+	vreinterpretq_s16_s32(x##i), vreinterpretq_s16_s32(x##j)).val[1], \
+	CONST_BITS+PASS1_BITS+3-16);
+			M1(0, 4) M1(1, 5) M1(2, 6) M1(3, 7)
+#undef M1
+			int16x4x2_t p0, p1; int8x8x2_t p2, p3;
+			p0 = vtrn_s16(vreinterpret_s16_s8(v0), vreinterpret_s16_s8(v2));
+			p1 = vtrn_s16(vreinterpret_s16_s8(v1), vreinterpret_s16_s8(v3));
+			p2 = vtrn_s8(vreinterpret_s8_s16(p0.val[0]), vreinterpret_s8_s16(p1.val[0]));
+			p3 = vtrn_s8(vreinterpret_s8_s16(p0.val[1]), vreinterpret_s8_s16(p1.val[1]));
+#define M1(i, p2, j) vst1_s8((int8_t*)&outptr[stride*i], veor_s8(p2.val[j], t0));
+			M1(0, p2, 0); M1(1, p2, 1); M1(2, p3, 0); M1(3, p3, 1);
+#undef M1
+		}
+	}
+#elif 1 && defined(USE_AVX2)
 	__m256i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256i tmp0, tmp1, tmp2, tmp3;
 	__m256i tmp10, tmp11, tmp12, tmp13;
@@ -171,7 +247,7 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 	M4(v4, v5, v6, v7, x4, x5, x6, x7)
 
 #define M1(i) x##i
-#define M2(i, tmp) v##i = _mm256_srai_epi32(ADD(tmp, t0), (CONST_BITS+PASS1_BITS+3));
+#define M2(i, tmp) v##i = _mm256_srai_epi32(ADD(tmp, t0), CONST_BITS+PASS1_BITS+3);
 	t0 = SET1((256+1) << (CONST_BITS+PASS1_BITS+3-1));
 	M3
 #undef M1
@@ -216,6 +292,13 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 #define MUL _mm_mullo_epi32
 #define SET1 _mm_set1_epi32
 #else
+#ifdef BITS_IN_JSAMPLE
+#if BITS_IN_JSAMPLE != 8
+#error only BITS_IN_JSAMPLE = 8 supported with SSE2
+#endif
+#else
+#warning only BITS_IN_JSAMPLE = 8 supported with SSE2
+#endif
 // lazy hack, values for multiply is a 16 bit
 #define MUL _mm_madd_epi16
 #define SET1(a) _mm_set1_epi32(a & 0xffff)
@@ -251,7 +334,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 		M4(v4, v5, v6, v7, x4, x5, x6, x7)
 
 #define M1(i) x##i
-#define M2(i, tmp) v##i = _mm_srai_epi32(ADD(tmp, t0), (CONST_BITS+PASS1_BITS+3));
+#define M2(i, tmp) v##i = _mm_srai_epi32(ADD(tmp, t0), CONST_BITS+PASS1_BITS+3);
 		t0 = _mm_set1_epi32((256+1) << (CONST_BITS+PASS1_BITS+3-1));
 		M3
 #undef M1
@@ -261,14 +344,12 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 		M4(v4, v5, v6, v7, x4, x5, x6, x7)
 #undef M4
 
-		x0 = _mm_packs_epi32(x0, x1);
-		x1 = _mm_packs_epi32(x2, x3);
-		x4 = _mm_packs_epi32(x4, x5);
-		x5 = _mm_packs_epi32(x6, x7);
-		x0 = _mm_packus_epi16(x0, x1);
-		x4 = _mm_packus_epi16(x4, x5);
-		v0 = _mm_unpacklo_epi32(x0, x4);
-		v1 = _mm_unpackhi_epi32(x0, x4);
+		x0 = _mm_packs_epi32(x0, x4);
+		x1 = _mm_packs_epi32(x1, x5);
+		x2 = _mm_packs_epi32(x2, x6);
+		x3 = _mm_packs_epi32(x3, x7);
+		v0 = _mm_packus_epi16(x0, x1);
+		v1 = _mm_packus_epi16(x2, x3);
 #define M1(i, v0, l) _mm_store##l##_pd((double*)&outptr[i*stride], _mm_castsi128_pd(v0));
 		M1(0, v0, l) M1(1, v0, h) M1(2, v1, l) M1(3, v1, h)
 #undef M1

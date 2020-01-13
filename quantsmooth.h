@@ -45,7 +45,6 @@ static inline int64_t get_time_usec() {
 #endif
 #endif
 
-
 #if defined(__SSE4_1__)
 #define USE_SSE2
 #define USE_SSE4
@@ -65,6 +64,24 @@ static inline int64_t get_time_usec() {
 #ifdef __AVX2__
 #define USE_AVX2
 #include <immintrin.h>
+#endif
+
+#if defined(__ARM_NEON__) || defined(__aarch64__)
+#define USE_NEON
+#include <arm_neon.h>
+// for testing on x86
+#elif 0 && defined(__SSSE3__)
+#define USE_NEON
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsequence-point"
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+#include "NEON_2_SSE.h"
+#pragma GCC diagnostic pop
+#warning NEON test build on x86
+#elif defined(__arm__)
+#warning compiling for ARM without NEON support
 #endif
 
 #define ALIGN(n) __attribute__((aligned(n)))
@@ -166,7 +183,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		}
 #endif
 
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+#define VINIT_NEON
+#elif 1 && defined(USE_AVX2)
 #define VINIT \
 	__m128i v0, v1, v5, v6 = _mm_set1_epi16(range); \
 	__m256 f0, f1, f4, vsum = _mm256_setzero_ps();
@@ -184,28 +203,28 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 
 #define VFIN \
 	f0 = vsum; \
-	f0 = _mm256_hadd_ps(f0, f0); f0 = _mm256_hadd_ps(f0, f0); \
+	f0 = _mm256_add_ps(f0, _mm256_shuffle_ps(f0, f0, 0xee)); \
+	f0 = _mm256_add_ps(f0, _mm256_shuffle_ps(f0, f0, 0x55)); \
 	a2 = _mm256_cvtss_f32(f0); \
 	a3 = _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
 
 #elif 1 && defined(USE_SSE2)
 #define VINIT \
 	__m128i v0, v1, v2, v5, v6 = _mm_set1_epi16(range), v7 = _mm_setzero_si128(); \
-	__m128 f0, f1, f2, f3, f4_lo, f4_hi; \
+	__m128 f0, f1, f2, f3; \
 	__m128 vsum1 = _mm_setzero_ps(), vsum2 = vsum1;
 
 #define VCORE(tab) \
-	f4_lo = _mm_load_ps(tab); f4_hi = _mm_load_ps(tab+4); \
 	v2 = _mm_srai_epi16(v0, 15); \
 	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v0)); \
-	VCORE1(lo, f0, f1) VCORE1(hi, f2, f3) \
+	VCORE1(lo, f0, f1, tab) VCORE1(hi, f2, f3, tab+4) \
 	vsum1 = _mm_add_ps(vsum1, _mm_add_ps(f0, f2)); \
 	vsum2 = _mm_add_ps(vsum2, _mm_add_ps(f1, f3));
 
-#define VCORE1(lo, f0, f1) \
+#define VCORE1(lo, f0, f1, tab) \
 	f0 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)); \
 	f0 = _mm_mul_ps(f0, f0); \
-	f1 = _mm_mul_ps(f0, f4_##lo); \
+	f1 = _mm_mul_ps(f0, _mm_load_ps(tab)); \
 	f0 = _mm_mul_ps(f0, _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v2))); \
 	f0 = _mm_mul_ps(f0, f1); f1 = _mm_mul_ps(f1, f1);
 
@@ -217,35 +236,102 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	a3 = _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
 #endif
 
-#ifdef VINIT
 		(void)p1; (void)a1; // suppress unused-variable warnings
+
+#ifdef VINIT_NEON
+#define VCORE(tab) \
+	v5 = vreinterpretq_s16_u16(vqsubq_u16(v6, \
+			vreinterpretq_u16_s16(vabsq_s16(v0)))); \
+	VCORE1(low, f0, f1, tab) VCORE1(high, f2, f3, tab+4) \
+	vsum1 = vaddq_f32(vsum1, vaddq_f32(f0, f2)); \
+	vsum2 = vaddq_f32(vsum2, vaddq_f32(f1, f3));
+
+#define VCORE1(low, f0, f1, tab) \
+	f0 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))); \
+	f0 = vmulq_f32(f0, f0); \
+	f1 = vmulq_f32(f0, vld1q_f32(tab)); \
+	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0)))); \
+	f0 = vmulq_f32(f0, f1); f1 = vmulq_f32(f1, f1);
+
+		{
+			int16x8_t v0, v5; uint16x8_t v6 = vdupq_n_u16(range);
+			float32x4_t f0, f1, f2, f3; uint8x8_t i0, i1;
+			float32x4_t vsum1 = vdupq_n_f32(0), vsum2 = vsum1;
+
+			for (y = 0; y < DCTSIZE; y++) {
+				i0 = vld1_u8(&buf[y*DCTSIZE]);
+				v0 = vreinterpretq_s16_u16(vsubl_u8(i0, vext_u8(i0, i0, 1)));
+				VCORE(tab+64+y*DCTSIZE)
+			}
+
+			i0 = vld1_u8(&buf[0]);
+			for (y = 0; y < DCTSIZE-1; y++) {
+				i1 = vld1_u8(&buf[y*DCTSIZE+DCTSIZE]);
+				v0 = vreinterpretq_s16_u16(vsubl_u8(i0, i1));
+				VCORE(tab+64*2+y*DCTSIZE)
+				i0 = i1;
+			}
+
+#define M5(y, yy) \
+	i0 = vld1_u8(&buf[y*DCTSIZE]); \
+	i1 = vld1_u8(&image[(yy)*stride]); \
+	v0 = vreinterpretq_s16_u16(vsubl_u8(i0, i1)); \
+	VCORE(tab+y*DCTSIZE)
+			M5(0, -1) M5(7, 8)
+#undef M5
+
+			int16_t tmp0[16]; float tmp1[16];
+#define M5(x, xx, yy, i) p0 = y*DCTSIZE+x; \
+	tmp0[i] = buf[p0] - image[(yy)*stride+(xx)]; tmp1[i] = tab[p0];
+			for (y = 0; y < DCTSIZE; y++) { M5(0, -1, y, y) M5(7, 8, y, y+8) }
+#undef M5
+			v0 = vld1q_s16(&tmp0[0]);
+			VCORE(tmp1)
+			v0 = vld1q_s16(&tmp0[8]);
+			VCORE(tmp1+8)
+
+			{
+				float32x4x2_t p0 = vzipq_f32(vsum1, vsum2);
+				float32x2_t v0;
+				f0 = vaddq_f32(p0.val[0], p0.val[1]);
+				v0 = vadd_f32(vget_low_f32(f0), vget_high_f32(f0));
+				a2 = vget_lane_f32(v0, 0);
+				a3 = vget_lane_f32(v0, 1);
+			}
+		}
+#undef VINIT_NEON
+#undef VCORE
+#undef VCORE1
+
+#elif defined(VINIT)
+#define VLDPIX(p) _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)p))
 
 		{
 			VINIT
 
 			for (y = 0; y < DCTSIZE; y++) {
-				v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE]));
+				v0 = VLDPIX(&buf[y*DCTSIZE]);
 				v0 = _mm_sub_epi16(v0, _mm_bsrli_si128(v0, 2));
 				VCORE(tab+64+y*DCTSIZE)
 			}
 
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[0]));
+			v0 = VLDPIX(&buf[0]);
 			for (y = 0; y < DCTSIZE-1; y++) {
-				v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE+DCTSIZE]));
+				v1 = VLDPIX(&buf[y*DCTSIZE+DCTSIZE]);
 				v0 = _mm_sub_epi16(v0, v1);
 				VCORE(tab+64*2+y*DCTSIZE)
 				v0 = v1;
 			}
 
 #define M5(y, yy) \
-	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&buf[y*DCTSIZE])); \
-	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(yy)*stride])); \
+	v0 = VLDPIX(&buf[y*DCTSIZE]); \
+	v1 = VLDPIX(&image[(yy)*stride]); \
 	v0 = _mm_sub_epi16(v0, v1); \
 	VCORE(tab+y*DCTSIZE)
 			M5(0, -1) M5(7, 8)
 #undef M5
 
-			unsigned short tmp0[16]; float tmp1[16];
+			int16_t tmp0[16]; float tmp1[16];
 #define M5(x, xx, yy, i) p0 = y*DCTSIZE+x; \
 	tmp0[i] = buf[p0] - image[(yy)*stride+(xx)]; tmp1[i] = tab[p0];
 			for (y = 0; y < DCTSIZE; y++) { M5(0, -1, y, y) M5(7, 8, y, y+8) }
@@ -263,25 +349,27 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #undef VCORE1
 #endif
 #undef VFIN
+#undef VLDPIX
 #else
+
 #define M2(a) { float x = (float)range-fabsf(a); if (x < 0) x = 0; x *= x; a *= x; a1 *= x; }
 #define M1(xx, yy, i) \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
 	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; \
 	M2(a0) a2 += a0 * a1; a3 += a1 * a1;
-		for (y = 0; y < DCTSIZE; y++)
-		for (x = 0; x < DCTSIZE-1; x++) { M1(x+1,y,1) }
-		for (y = 0; y < DCTSIZE-1; y++)
-		for (x = 0; x < DCTSIZE; x++) { M1(x,y+1,2) }
+		for (y = 0; y < 8; y++)
+		for (x = 0; x < 7; x++) { M1(x+1,y,1) }
+		for (y = 0; y < 7; y++)
+		for (x = 0; x < 8; x++) { M1(x,y+1,2) }
 #undef M1
 #define M1(xx, yy) \
 	p0 = y*DCTSIZE+x; \
 	a0 = buf[p0] - image[(yy)*stride+(xx)]; a1 = tab[p0]; \
 	M2(a0) a2 += a0 * a1; a3 += a1 * a1;
-		y = 0; for (x = 0; x < DCTSIZE; x++) { M1(x,y-1) }
-		y = DCTSIZE-1; for (x = 0; x < DCTSIZE; x++) { M1(x,y+1) }
-		x = 0; for (y = 0; y < DCTSIZE; y++) { M1(x-1,y) }
-		x = DCTSIZE-1; for (y = 0; y < DCTSIZE; y++) { M1(x+1,y) }
+		y = 0; for (x = 0; x < 8; x++) { M1(x,y-1) }
+		y = 7; for (x = 0; x < 8; x++) { M1(x,y+1) }
+		x = 0; for (y = 0; y < 8; y++) { M1(x-1,y) }
+		x = 7; for (y = 0; y < 8; y++) { M1(x+1,y) }
 #undef M1
 #undef M2
 #endif
