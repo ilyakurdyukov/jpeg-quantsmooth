@@ -88,7 +88,7 @@ static inline int64_t get_time_usec() {
 
 #include "idct.h"
 
-static float ALIGN(32) quantsmooth_tables[DCTSIZE2][3*DCTSIZE2 + 8];
+static float ALIGN(32) quantsmooth_tables[DCTSIZE2][3*DCTSIZE2 + DCTSIZE];
 
 static void quantsmooth_init() {
 	int i; JCOEF coef[DCTSIZE2];
@@ -170,7 +170,39 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #endif
 
 #if 1 && defined(USE_NEON)
-#define VINIT_NEON
+#define VINIT \
+	int16x8_t v0, v5; uint16x8_t v6 = vdupq_n_u16(range); \
+	float32x4_t f0, f1, f2, f3; uint8x8_t i0, i1; \
+	float32x4_t vsum1 = vdupq_n_f32(0), vsum2 = vsum1;
+
+#define VCORE(tab) \
+	v0 = vreinterpretq_s16_u16(vsubl_u8(i0, i1)); \
+	v5 = vreinterpretq_s16_u16(vqsubq_u16(v6, \
+			vreinterpretq_u16_s16(vabsq_s16(v0)))); \
+	VCORE1(low, f0, f1, tab) VCORE1(high, f2, f3, tab+4) \
+	vsum1 = vaddq_f32(vsum1, vaddq_f32(f0, f2)); \
+	vsum2 = vaddq_f32(vsum2, vaddq_f32(f1, f3));
+
+#define VCORE1(low, f0, f1, tab) \
+	f0 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))); \
+	f0 = vmulq_f32(f0, f0); \
+	f1 = vmulq_f32(f0, vld1q_f32(tab)); \
+	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0)))); \
+	f0 = vmulq_f32(f0, f1); f1 = vmulq_f32(f1, f1);
+
+#define VFIN { \
+	float32x4x2_t p0 = vzipq_f32(vsum1, vsum2); \
+	float32x2_t v0; \
+	f0 = vaddq_f32(p0.val[0], p0.val[1]); \
+	v0 = vadd_f32(vget_low_f32(f0), vget_high_f32(f0)); \
+	a2 = vget_lane_f32(v0, 0); \
+	a3 = vget_lane_f32(v0, 1); \
+}
+
+#define VLDPIX(j, p) i##j = vld1_u8(p);
+#define VRIGHT(p) i1 = vext_u8(i0, vld1_dup_u8(p), 1);
+#define VCOPY1 i0 = i1;
+
 #elif 1 && defined(USE_AVX2)
 #define VINIT \
 	__m128i v0, v1, v5, v6 = _mm_set1_epi16(range); \
@@ -194,6 +226,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	f0 = _mm256_add_ps(f0, _mm256_shuffle_ps(f0, f0, 0x55)); \
 	a2 = _mm256_cvtss_f32(f0); \
 	a3 = _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
+
+#define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
+#define VRIGHT(p) v1 = _mm_insert_epi16(_mm_bsrli_si128(v0, 2), *(JSAMPLE*)(p), 7);
+#define VCOPY1 v0 = v1;
 
 #elif 1 && defined(USE_SSE2)
 #define VINIT \
@@ -222,107 +258,76 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	f0 = _mm_add_ps(f0, _mm_shuffle_ps(f0, f0, 0xee)); \
 	a2 = _mm_cvtss_f32(f0); \
 	a3 = _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
+
+#define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
+#define VRIGHT(p) v1 = _mm_insert_epi16(_mm_bsrli_si128(v0, 2), *(JSAMPLE*)(p), 7);
+#define VCOPY1 v0 = v1;
+#elif 1 // vector code simulation
+#define VINIT \
+	int i; JSAMPLE *p0, *p1, rborder[8]; \
+	float sum[8] = { 0,0,0,0, 0,0,0,0 };
+
+#define VCORE(tab) \
+	for (i = 0; i < 4; i++) { \
+		float a0, a1, a4, a5, f0; \
+		VCORE1(i, a0, a1, tab) VCORE1(i+4, a4, a5, tab) \
+		sum[i] += a0 + a4; sum[i+4] += a1 + a5; \
+	}
+
+#define VCORE1(i, a0, a1, tab) \
+	a0 = p0[i] - p1[i]; a1 = (tab)[i]; \
+	f0 = (float)range-fabsf(a0); if (f0 < 0) f0 = 0; f0 *= f0; \
+	a0 *= f0; a1 *= f0; a0 *= a1; a1 *= a1;
+
+#define VFIN \
+	a2 = (sum[0] + sum[2]) + (sum[1] + sum[3]); \
+	a3 = (sum[4] + sum[6]) + (sum[5] + sum[7]);
+
+#define VLDPIX(i, a) p##i = a;
+#define VRIGHT(p) p1 = rborder; memcpy(p1, p0 + 1, 7 * sizeof(JSAMPLE)); p1[7] = *(p);
+#define VCOPY1 p0 = p1;
 #endif
 
-#ifdef VINIT_NEON
-#define VCORE(tab) \
-	v0 = vreinterpretq_s16_u16(vsubl_u8(i0, i1)); \
-	v5 = vreinterpretq_s16_u16(vqsubq_u16(v6, \
-			vreinterpretq_u16_s16(vabsq_s16(v0)))); \
-	VCORE1(low, f0, f1, tab) VCORE1(high, f2, f3, tab+4) \
-	vsum1 = vaddq_f32(vsum1, vaddq_f32(f0, f2)); \
-	vsum2 = vaddq_f32(vsum2, vaddq_f32(f1, f3));
-
-#define VCORE1(low, f0, f1, tab) \
-	f0 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))); \
-	f0 = vmulq_f32(f0, f0); \
-	f1 = vmulq_f32(f0, vld1q_f32(tab)); \
-	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0)))); \
-	f0 = vmulq_f32(f0, f1); f1 = vmulq_f32(f1, f1);
-
+#ifdef VINIT
 		{
-			uint8_t tmp0[8];
-			int16x8_t v0, v5; uint16x8_t v6 = vdupq_n_u16(range);
-			float32x4_t f0, f1, f2, f3; uint8x8_t i0, i1;
-			float32x4_t vsum1 = vdupq_n_f32(0), vsum2 = vsum1;
-
-			for (y = 0; y < DCTSIZE; y++) {
-				tmp0[y] = buf[y*DCTSIZE];
-				i0 = vld1_u8(buf+y*DCTSIZE);
-				i1 = vext_u8(i0, vld1_dup_u8(buf+DCTSIZE2+DCTSIZE+y), 1);
-				VCORE(tab+64+y*DCTSIZE)
-			}
-
-			i0 = vld1_u8(buf);
-			for (y = 0; y < DCTSIZE-1; y++) {
-				i1 = vld1_u8(buf+y*DCTSIZE+DCTSIZE);
-				VCORE(tab+64*2+y*DCTSIZE)
-				i0 = i1;
-			}
-
-			i0 = vld1_u8(buf);
-			i1 = vld1_u8(image-stride);
-			VCORE(tab)
-			i0 = vld1_u8(buf+7*DCTSIZE);
-			i1 = vld1_u8(image+8*stride);
-			VCORE(tab+7*DCTSIZE)
-			i0 = vld1_u8(tmp0);
-			i1 = vld1_u8(buf+DCTSIZE2);
-			VCORE(tab+3*DCTSIZE2)
-
-			{
-				float32x4x2_t p0 = vzipq_f32(vsum1, vsum2);
-				float32x2_t v0;
-				f0 = vaddq_f32(p0.val[0], p0.val[1]);
-				v0 = vadd_f32(vget_low_f32(f0), vget_high_f32(f0));
-				a2 = vget_lane_f32(v0, 0);
-				a3 = vget_lane_f32(v0, 1);
-			}
-		}
-#undef VINIT_NEON
-#undef VCORE
-#undef VCORE1
-
-#elif defined(VINIT)
-#define VLDPIX(p) _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)))
-
-		{
-			uint8_t tmp0[8];
+			JSAMPLE lborder[8];
 			VINIT
 
 			for (y = 0; y < DCTSIZE; y++) {
-				tmp0[y] = buf[y*DCTSIZE];
-				v0 = VLDPIX(buf+y*DCTSIZE);
-				v1 = _mm_insert_epi16(_mm_bsrli_si128(v0, 2), buf[DCTSIZE2+DCTSIZE+y], 7);
+				lborder[y] = buf[y*DCTSIZE];
+				VLDPIX(0, buf+y*DCTSIZE)
+				VRIGHT(buf+DCTSIZE2+DCTSIZE+y)
 				VCORE(tab+64+y*DCTSIZE)
 			}
 
-			v0 = VLDPIX(&buf[0]);
+			VLDPIX(0, buf)
 			for (y = 0; y < DCTSIZE-1; y++) {
-				v1 = VLDPIX(buf+y*DCTSIZE+DCTSIZE);
+				VLDPIX(1, buf+y*DCTSIZE+DCTSIZE)
 				VCORE(tab+64*2+y*DCTSIZE)
-				v0 = v1;
+				VCOPY1
 			}
 
-			v0 = VLDPIX(buf);
-			v1 = VLDPIX(image-stride);
+			VLDPIX(0, buf)
+			VLDPIX(1, image-stride)
 			VCORE(tab)
-			v0 = VLDPIX(buf+7*DCTSIZE);
-			v1 = VLDPIX(image+8*stride);
+			VLDPIX(0, buf+7*DCTSIZE)
+			VLDPIX(1, image+8*stride)
 			VCORE(tab+7*DCTSIZE)
-			v0 = VLDPIX(tmp0);
-			v1 = VLDPIX(buf+DCTSIZE2);
+			VLDPIX(0, lborder)
+			VLDPIX(1, buf+DCTSIZE2)
 			VCORE(tab+3*DCTSIZE2)
 
 			VFIN
 		}
 #undef VINIT
 #undef VCORE
-#ifdef VCORE
+#ifdef VCORE1
 #undef VCORE1
 #endif
 #undef VFIN
 #undef VLDPIX
+#undef VRIGHT
+#undef VCOPY1
 #else
 		{
 			int p0, p1; float a0, a1;

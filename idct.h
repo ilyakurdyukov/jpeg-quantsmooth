@@ -292,16 +292,16 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 #define MUL _mm_mullo_epi32
 #define SET1 _mm_set1_epi32
 #else
-#ifdef BITS_IN_JSAMPLE
-#if BITS_IN_JSAMPLE != 8
-#error only BITS_IN_JSAMPLE = 8 supported with SSE2
-#endif
-#else
-#warning only BITS_IN_JSAMPLE = 8 supported with SSE2
-#endif
-// lazy hack, values for multiply is a 16 bit
+#if BITS_IN_JSAMPLE == 8
 #define MUL _mm_madd_epi16
 #define SET1(a) _mm_set1_epi32(a & 0xffff)
+#else
+#define MUL(a, b) ({ __m128i __l = _mm_mul_epu32(a, b), \
+	__h = _mm_mul_epu32(_mm_bsrli_si128(a, 4), _mm_bsrli_si128(b, 4)); \
+	_mm_unpacklo_epi64(_mm_unpacklo_epi32(__l, __h), _mm_unpackhi_epi32(__l, __h)); \
+})
+#define SET1 _mm_set1_epi32
+#endif
 #endif
 #define SHL _mm_slli_epi32
 
