@@ -1,16 +1,17 @@
 
+APPNAME ?= quantsmooth
 CFLAGS ?= -Wall -O2 -march=native -fopenmp
 LIBS ?= -ljpeg -lm
 
 .PHONY: clean all
 
-all: quantsmooth
+all: $(APPNAME)
 
 clean:
-	rm -rf quantsmooth
+	rm -rf $(APPNAME)
 
-quantsmooth: quantsmooth.h idct.h
+$(APPNAME): quantsmooth.h idct.h
 
-quantsmooth: quantsmooth.c
-	$(CC) $(CFLAGS) -s -o $@ $< $(LIBS)
+$(APPNAME): quantsmooth.c
+	$(CC) -DAPPNAME=$(APPNAME) $(CFLAGS) -s -o $@ $< $(LIBS)
 

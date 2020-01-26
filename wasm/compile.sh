@@ -13,7 +13,7 @@ debug=0
 emflags="-O3 -g0 --closure 1"
 [ $debug == 1 ] && emflags="-O2 -g1 -s ASSERTIONS=1"
 
-emcc -I $jpeg ../quantsmooth.c $list -o quantsmooth.html --shell-file shell.html \
+emcc -DWASM -I $jpeg ../quantsmooth.c $list -o quantsmooth.html --shell-file shell.html \
 	$emflags -Wno-shift-negative-value \
 	-s EXPORTED_FUNCTIONS="['_malloc', '_free']" -s ALLOW_MEMORY_GROWTH=1
 mv quantsmooth.html index.html

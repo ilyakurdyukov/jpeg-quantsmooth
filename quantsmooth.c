@@ -23,16 +23,17 @@
 #include <stdint.h>
 #include <math.h>
 
+#define STRINGIFY(s) #s
+#define TOSTRING(s) STRINGIFY(s)
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#define WASM
+#else
+#define EMSCRIPTEN_KEEPALIVE
 #endif
 
-#ifdef WASM_MAIN
-#ifndef __EMSCRIPTEN__
-#define EMSCRIPTEN_KEEPALIVE
+#if defined(WASM_MAIN) && !defined(WASM)
 #define WASM
-#endif
 #endif
 
 #include "jpeglib.h"
@@ -182,7 +183,11 @@ int main(int argc, char **argv) {
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
 #else
-	const char *progname = "quantsmooth", *fn;
+#ifndef APPNAME
+	const char *progname = argv[0], *fn;
+#else
+	const char *progname = TOSTRING(APPNAME), *fn;
+#endif
 #endif
 
 	while (argc > 1) {
@@ -226,9 +231,7 @@ int main(int argc, char **argv) {
 
 	if (verbose_level) {
 #ifdef LIBJPEG_TURBO_VERSION
-#define TOSTR(s) #s
-#define TOSTR1(s) TOSTR(s)
-		logfmt("using libjpeg-turbo version %s\n", TOSTR1(LIBJPEG_TURBO_VERSION));
+		logfmt("using libjpeg-turbo version %s\n", TOSTRING(LIBJPEG_TURBO_VERSION));
 #else
 		logfmt("using libjpeg version %d\n", JPEG_LIB_VERSION);
 #endif
