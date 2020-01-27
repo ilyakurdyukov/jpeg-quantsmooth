@@ -11,9 +11,22 @@ Web version available [here](https://ilyakurdyukov.github.io/jpeg-quantsmooth/).
 Runs in your browser, none of your data is send outside.
 But without multithreading and SIMD optimizations it works noticeably slower.
 
+## Build
+
+Type for build:
+```sh
+make
+```
+If you do not want to use SSE, type:
+```sh
+make CFLAGS="-fopenmp -O2 -mno-sse2" clean all
+```
+
 ## Usage
 
-`quantsmooth [options] input.jpg output.jpg`
+```sh
+quantsmooth [options] input.jpg output.jpg
+```
 
 ## Options
 `--optimize`
@@ -25,6 +38,14 @@ Print debug info form libjpeg.
 `--info n`
 Print debug info from quantsmooth (on by default, set to 0 to disable).
 
+`--border N.N`
+Size border (default = 2.0)
+
+`--gain N.N`
+Gain coefficients (default = 2.0)
+
+`--niter N`
+Number iteration (default = 3)
 
 ## Examples
 Note: Images 3x zoomed.
