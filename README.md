@@ -53,3 +53,30 @@ make LIBS="-I jpeg-6b jpeg-6b/libjpeg.a -lm"
 ## Building on Windows
 Get [MSYS2](https://www.msys2.org/), install needed packages with pacman and build with __release.sh__.
 If you not familiar with building unix applications on windows, then you can download program from [releases](https://github.com/ilyakurdyukov/jpeg-quantsmooth/releases).
+
+## Alternatives and comparison
+
+Similar projects, and how I see them after some testing.
+
+<p>
+<a href="https://github.com/victorvde/jpeg2png"><b>jpeg2png</b></a>:<br>
+&nbsp;✔️ good documentation and math model<br>
+&nbsp;✔️ has tuning options<br>
+&nbsp;✔️ better at deblocking low quality JPEG images<br>
+&nbsp;❓ little blurry in default mode (compared to <b>quantsmooth</b>), but can be tuned<br>
+&nbsp;➖ 10 to 20 times slower<br>
+&nbsp;➖ less permissive license (GPL-3.0)<br>
+</p>
+
+**jpeg2png** can provide roughly same quality (better in not common cases), but significantly slower.
+
+<p>
+<a href="https://github.com/google/knusperli"><b>knusperli</b></a>:<br>
+&nbsp;✔️ more permissive license (Apache-2.0)<br>
+&nbsp;➖ you can hardly see any improvements on the image<br>
+&nbsp;➖ no performance optimizations (but roughly same speed as for <b>quantsmooth</b> with optimizations)<br>
+&nbsp;➖ no any command line options<br>
+&nbsp;➖ uncommon build system<br>
+</p>
+
+**knusperli** is good for nothing, in my opinion.
