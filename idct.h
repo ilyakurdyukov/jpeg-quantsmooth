@@ -32,21 +32,18 @@ static const char jpeg_natural_order[DCTSIZE2] = {
 	53, 60, 61, 54, 47, 55, 62, 63
 };
 
-static JSAMPLE range_limit_static[5 * (MAXJSAMPLE+1) + CENTERJSAMPLE];
+static JSAMPLE range_limit_static[11 * CENTERJSAMPLE];
 
 static void range_limit_init() {
-	int i;
-	JSAMPLE *table = range_limit_static;
+	int i, c = CENTERJSAMPLE, m = c * 2;
+	JSAMPLE *t = range_limit_static;
 
-	memset(table, 0, (MAXJSAMPLE+1) * sizeof(JSAMPLE));
-	table += (MAXJSAMPLE+1);
-	for (i = 0; i <= MAXJSAMPLE; i++) table[i] = i;
-	table += CENTERJSAMPLE;       /* Point to where post-IDCT table starts */
-	/* End of simple table, rest of first half of post-IDCT table */
-	for (i = CENTERJSAMPLE; i < 2*(MAXJSAMPLE+1); i++) table[i] = MAXJSAMPLE;
-	/* Second half of post-IDCT table */
-	memset(table + 2 * (MAXJSAMPLE+1), 0, (2 * (MAXJSAMPLE+1) - CENTERJSAMPLE) * sizeof(JSAMPLE));
-	memcpy(table + 4 * (MAXJSAMPLE+1) - CENTERJSAMPLE, table - CENTERJSAMPLE, CENTERJSAMPLE * sizeof(JSAMPLE));
+	for (i = 0; i < m; i++) t[i] = 0;
+	t += m;
+	for (i = 0; i < m; i++) t[i] = i;
+	for (; i < 2 * m + c; i++) t[i] = m - 1;
+	for (; i < 4 * m; i++) t[i] = 0;
+	for (i = 0; i < c; i++) t[4 * m + i] = i;
 }
 
 #define CONST_BITS  13

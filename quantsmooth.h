@@ -130,7 +130,7 @@ static short dct_table1[DCTSIZE2] = { M1, M1, M1, M1, M1, M1, M1, M1 };
 #endif
 
 static const char zigzag_refresh[DCTSIZE2] = {
-	0, 0, 1, 0, 1, 0, 1, 0,
+	1, 0, 1, 0, 1, 0, 1, 0,
 	1, 0, 0, 0, 0, 0, 0, 1,
 	0, 0, 0, 0, 0, 0, 0, 0,
 	1, 0, 0, 0, 0, 0, 0, 1,
@@ -156,18 +156,13 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	}
 
 	for (k = DCTSIZE2-1; k > 0; k--) {
-		float *tab, a2, a3;
 		int i = jpeg_natural_order[k];
+		float *tab = quantsmooth_tables[i], a2 = 0, a3 = 0;
 		int range = quantval[i] * 2;
-
-		tab = quantsmooth_tables[i];
-		a2 = a3 = 0;
-#if 1
-		if (flag != 0 && zigzag_refresh[k]) {
+		if (flag && zigzag_refresh[i]) {
 			idct_islow(coef, buf, DCTSIZE);
 			flag = 0;
 		}
-#endif
 
 #if 1 && defined(USE_NEON)
 #define VINIT \
@@ -330,25 +325,21 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #undef VCOPY1
 #else
 		{
-			int p0, p1; float a0, a1;
-#define M2(a) { float x = (float)range-fabsf(a); if (x < 0) x = 0; x *= x; a *= x; a1 *= x; }
-#define M1(xx, yy, i) \
+			int p0, p1; float a0, a1, t;
+#define M2 t = (float)range-fabsf(a0); \
+	if (t < 0) t = 0; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
+#define M1(yn, xn, xx, yy, i) for (y = 0; y < yn; y++) for (x = 0; x < xn; x++) { \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
-	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; \
-	M2(a0) a2 += a0 * a1; a3 += a1 * a1;
-			for (y = 0; y < 8; y++)
-			for (x = 0; x < 7; x++) { M1(x+1,y,1) }
-			for (y = 0; y < 7; y++)
-			for (x = 0; x < 8; x++) { M1(x,y+1,2) }
+	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; M2 }
+			M1(8,7,x+1,y,1)
+			M1(7,8,x,y+1,2)
 #undef M1
-#define M1(xx, yy) \
-	p0 = y*DCTSIZE+x; \
-	a0 = buf[p0] - image[(yy)*stride+(xx)]; a1 = tab[p0]; \
-	M2(a0) a2 += a0 * a1; a3 += a1 * a1;
-			y = 0; for (x = 0; x < 8; x++) { M1(x,y-1) }
-			y = 7; for (x = 0; x < 8; x++) { M1(x,y+1) }
-			x = 0; for (y = 0; y < 8; y++) { M1(x-1,y) }
-			x = 7; for (y = 0; y < 8; y++) { M1(x+1,y) }
+#define M1(z, xx, yy) for (z = 0; z < 8; z++) { p0 = y*DCTSIZE+x; \
+	a0 = buf[p0] - image[(yy)*stride+(xx)]; a1 = tab[p0]; M2 }
+			y = 0; M1(x,x,y-1)
+			y = 7; M1(x,x,y+1)
+			x = 0; M1(y,x-1,y)
+			x = 7; M1(y,x+1,y)
 #undef M1
 #undef M2
 		}
@@ -359,7 +350,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		{
 			int div = quantval[i], coef1 = coef[i], add;
 			int dh, dl, d0 = (div-1) >> 1, d1 = div >> 1;
-			// int a0 = ((coef1 + (div >> 1)) / div) * div - (coef1 < 0 ? div : 0);
+			// int a0 = (coef1 + (coef1 < 0 ? -div : div) / 2) / div * div;
 			int32_t a0 = coef1, sign = a0 >> 31;
 			a0 = (a0 ^ sign) - sign;
 			a0 = ((a0 + (div >> 1)) / div) * div;
@@ -393,7 +384,7 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 		comp_height = compptr->height_in_blocks;
 
 		qtblno = compptr->quant_tbl_no;
-		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
+		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || !srcinfo->quant_tbl_ptrs[qtblno]) continue;
 		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
 
 		// skip already processed
@@ -412,7 +403,7 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 #ifdef WITH_LOG
 		if (flags & 4) logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
-#define IMAGEPTR &image[((blk_y + offset_y) * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1]
+#define IMAGEPTR &image[(blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1]
 
 #ifdef USE_JSIMD
 		JSAMPROW output_buf[8] = {
@@ -424,55 +415,43 @@ static void quantsmooth_transform(j_decompress_ptr srcinfo, jvirt_barray_ptr *sr
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (blk_y = 0; blk_y < comp_height; blk_y += compptr->v_samp_factor) {
-				JDIMENSION offset_y, blk_x;
-				JDIMENSION height = comp_height - blk_y;
-				if (height > compptr->v_samp_factor) height = compptr->v_samp_factor;
-
+			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
+				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-					((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
-					(JDIMENSION) compptr->v_samp_factor, TRUE);
+						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
 
-				for (offset_y = 0; offset_y < height; offset_y++) {
-					for (blk_x = 0; blk_x < comp_width; blk_x++) {
-						JCOEFPTR coef = buffer[offset_y][blk_x]; int x;
-						if (!iter)
-							for (x = 0; x < DCTSIZE2; x++) coef[x] *= qtbl->quantval[x];
+				for (blk_x = 0; blk_x < comp_width; blk_x++) {
+					JCOEFPTR coef = buffer[0][blk_x]; int i;
+					if (!iter)
+						for (i = 0; i < DCTSIZE2; i++) coef[i] *= qtbl->quantval[i];
 #ifdef USE_JSIMD
-						int output_col = IMAGEPTR - image;
+					int output_col = IMAGEPTR - image;
 #endif
-						idct_islow(coef, IMAGEPTR, stride);
-					}
+					idct_islow(coef, IMAGEPTR, stride);
 				}
 			}
 
 			{
 				int y, w = comp_width * DCTSIZE, h = comp_height * DCTSIZE;
-				memcpy(image, image + stride, stride);
 				for (y = 1; y < h+1; y++) {
 					image[y*stride] = image[y*stride+1];
 					image[y*stride+w+1] = image[y*stride+w];
 				}
+				memcpy(image, image + stride, stride);
 				memcpy(image + (h+1)*stride, image + h*stride, stride);
 			}
 
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (blk_y = 0; blk_y < compptr->height_in_blocks; blk_y += compptr->v_samp_factor) {
-				JDIMENSION offset_y, blk_x;
-				JDIMENSION height = comp_height - blk_y;
-				if (height > compptr->v_samp_factor) height = compptr->v_samp_factor;
-
+			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
+				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-					((j_common_ptr) srcinfo, src_coef_arrays[ci], blk_y,
-					(JDIMENSION) compptr->v_samp_factor, TRUE);
+						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
 
-				for (offset_y = 0; offset_y < height; offset_y++) {
-					for (blk_x = 0; blk_x < comp_width; blk_x++) {
-						JCOEFPTR coef = buffer[offset_y][blk_x];
-						quantsmooth_block(coef, qtbl->quantval, IMAGEPTR, stride);
-					}
+				for (blk_x = 0; blk_x < comp_width; blk_x++) {
+					JCOEFPTR coef = buffer[0][blk_x];
+					quantsmooth_block(coef, qtbl->quantval, IMAGEPTR, stride);
 				}
 			}
 		} // iter
@@ -490,7 +469,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arra
 	if (flags & 1)
 	for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
 		qtblno = compptr->quant_tbl_no;
-		logfmt("component[%i] : table %i, samp %ix%i\n", ci, qtblno, compptr->h_samp_factor, compptr->v_samp_factor);
+		logfmt("component[%i] : table %i, samp %ix%i\n", ci, qtblno, compptr->h_samp_factor, 1);
 		/* Make sure specified quantization table is present */
 		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
 	}
@@ -533,9 +512,9 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arra
 
 	for (ci = 0, compptr = srcinfo->comp_info; ci < srcinfo->num_components; ci++, compptr++) {
 		qtblno = compptr->quant_tbl_no;
-		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || srcinfo->quant_tbl_ptrs[qtblno] == NULL) continue;
+		if (qtblno < 0 || qtblno >= NUM_QUANT_TBLS || !srcinfo->quant_tbl_ptrs[qtblno]) continue;
 		qtbl = srcinfo->quant_tbl_ptrs[qtblno];
 		c_quant = compptr->quant_table;
-		if (c_quant) memcpy(c_quant, qtbl, sizeof(qtbl->quantval));
+		if (c_quant) memcpy(c_quant, qtbl, sizeof(qtbl[0]));
 	}
 }
