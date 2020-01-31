@@ -17,14 +17,11 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 
 ## Options
 `--optimize`
-Smaller output file.
-
+Smaller output file.  
 `--verbose n`
-Print debug info form libjpeg.
-
+Print debug info form libjpeg.  
 `--info n`
-Print debug info from quantsmooth (on by default, set to 0 to disable).
-
+Print debug info from quantsmooth (on by default, set to 0 to disable).  
 
 ## Examples
 Note: Images 3x zoomed.
@@ -45,26 +42,26 @@ Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04, and from sources: li
 ### Building with libjpeg sources
 
 1. Download and extract *libjpeg* sources:
-    1. *libjpeg*, for example version 62
-    `wget https://www.ijg.org/files/jpegsrc.v6b.tar.gz`
+    1. *libjpeg*, for example version 62  
+    `wget https://www.ijg.org/files/jpegsrc.v6b.tar.gz`  
     `tar -xzf jpegsrc.v6b.tar.gz`
-    2. *libjpeg-turbo*, for example version 2.0.4
-    `wget -O libjpeg-turbo-2.0.4.tar.gz https://sourceforge.net/projects/libjpeg-turbo/files/2.0.4/libjpeg-turbo-2.0.4.tar.gz`
+    2. *libjpeg-turbo*, for example version 2.0.4  
+    `wget -O libjpeg-turbo-2.0.4.tar.gz https://sourceforge.net/projects/libjpeg-turbo/files/2.0.4/libjpeg-turbo-2.0.4.tar.gz`  
     `tar -xzf libjpeg-turbo-2.0.4.tar.gz`
 
-- For a *libjpeg* (not *turbo*) you can build `jpegqs` in a simplier way:
-`make JPEGSRC=jpeg-6b`
-This uses static configuration from `jconfig.h`, which should work for common systems.
-The following items are not needed if you do so.
+- For a *libjpeg* (not *turbo*) you can build `jpegqs` in a simpler way:  
+`make JPEGSRC=jpeg-6b`  
+This uses static configuration from `jconfig.h`, which should work for common systems.  
+The following items are not needed if you do so.  
 
-2. Configure and build *libjpeg*, <srcdir>
-    1. For *libjpeg* and *libjpeg-turbo-1.x.x*:
+2. Configure and build *libjpeg*:
+    1. For *libjpeg* and *libjpeg-turbo-1.x.x*:  
     `(cd jpeg-6b && ./configure && make all)`
-    2. For *libjpeg-turbo-2.x.x* `./configure` script is replaced with `cmake`:
+    2. For *libjpeg-turbo-2.x.x* `./configure` script is replaced with `cmake`:  
     `(cd libjpeg-turbo-2.0.4 && mkdir -p .libs && (cd .libs && cmake -G"Unix Makefiles" .. && make all))`
 
-3. Tell `make` where to find *libjpeg* includes and `libjpeg.a`
-`make JPEGLIB="-Ijpeg-6b jpeg-6b/libjpeg.a`
+3. Tell `make` where to find *libjpeg* includes and `libjpeg.a`  
+`make JPEGLIB="-Ijpeg-6b jpeg-6b/libjpeg.a`  
 For a newer versions `libjpeg.a` is located in a `.libs/` dir.
 
 ## Building on Windows
@@ -75,25 +72,21 @@ If you not familiar with building unix applications on windows, then you can dow
 
 Similar projects, and how I see them after some testing.
 
-<p>
-<a href="https://github.com/victorvde/jpeg2png"><b>jpeg2png</b></a>:<br>
-&nbsp;✔️ good documentation and math model<br>
-&nbsp;✔️ has tuning options<br>
-&nbsp;✔️ better at deblocking low quality JPEG images<br>
-&nbsp;❓ little blurry in default mode (compared to <b>quantsmooth</b>), but can be tuned<br>
-&nbsp;➖ 10 to 20 times slower<br>
-&nbsp;➖ less permissive license (GPL-3.0)<br>
-</p>
+[jpeg2png](https://github.com/victorvde/jpeg2png):  
+&nbsp;✔️ good documentation and math model  
+&nbsp;✔️ has tuning options  
+&nbsp;✔️ better at deblocking low quality JPEG images  
+&nbsp;❓ little blurry in default mode (compared to <b>quantsmooth</b>), but can be tuned  
+&nbsp;➖ 10 to 20 times slower  
+&nbsp;➖ less permissive license (GPL-3.0)  
 
 **jpeg2png** can provide roughly same quality (better in not common cases), but significantly slower.
 
-<p>
-<a href="https://github.com/google/knusperli"><b>knusperli</b></a>:<br>
-&nbsp;✔️ more permissive license (Apache-2.0)<br>
-&nbsp;➖ you can hardly see any improvements on the image<br>
-&nbsp;➖ no performance optimizations (but roughly same speed as for <b>quantsmooth</b> with optimizations)<br>
-&nbsp;➖ no any command line options<br>
-&nbsp;➖ uncommon build system<br>
-</p>
+[knusperli](https://github.com/google/knusperli):  
+&nbsp;✔️ more permissive license (Apache-2.0)  
+&nbsp;➖ you can hardly see any improvements on the image  
+&nbsp;➖ no performance optimizations (but roughly same speed as for <b>quantsmooth</b> with optimizations)  
+&nbsp;➖ no any command line options  
+&nbsp;➖ uncommon build system  
 
 **knusperli** is good for nothing, in my opinion.
