@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <math.h>
 
 #define STRINGIFY(s) #s
 #define TOSTRING(s) STRINGIFY(s)
@@ -219,12 +218,17 @@ int main(int argc, char **argv) {
 #else
 	if (argc != 3) {
 		logfmt(
+"JPEG Quant Smooth : Copyright (c) 2020 Ilya Kurdyukov\n"
+"Build date: " __DATE__ "\n"
+"\n"
 "Usage:\n"
 "  %s [options] input.jpg output.jpg\n"
+"\n"
 "Options:\n"
 "  --optimize        Optimize Huffman table (smaller file, but slow compression)\n"
 "  --verbose level   Print libjpeg debug output\n"
-"  --info flags      Print quantsmooth debug output\n", progname);
+"  --info flags      Print quantsmooth debug output\n"
+"\n", progname);
 		return 1;
 	}
 #endif

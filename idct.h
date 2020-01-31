@@ -285,20 +285,12 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 
 #define ADD _mm_add_epi32
 #define SUB _mm_sub_epi32
-#ifdef USE_SSE4
-#define MUL _mm_mullo_epi32
-#define SET1 _mm_set1_epi32
-#else
-#if BITS_IN_JSAMPLE == 8
+#if BITS_IN_JSAMPLE == 8 && !defined(USE_SSE4)
 #define MUL _mm_madd_epi16
 #define SET1(a) _mm_set1_epi32(a & 0xffff)
 #else
-#define MUL(a, b) ({ __m128i __l = _mm_mul_epu32(a, b), \
-	__h = _mm_mul_epu32(_mm_bsrli_si128(a, 4), _mm_bsrli_si128(b, 4)); \
-	_mm_unpacklo_epi64(_mm_unpacklo_epi32(__l, __h), _mm_unpackhi_epi32(__l, __h)); \
-})
+#define MUL _mm_mullo_epi32
 #define SET1 _mm_set1_epi32
-#endif
 #endif
 #define SHL _mm_slli_epi32
 
@@ -366,24 +358,11 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #define SET1(a) (a)
 #define SHL(a, b) ((a) << (b))
 
-	/* Pass 1: process columns from input, store into work array. */
-	/* Note results are scaled up by sqrt(8) compared to a true IDCT; */
-	/* furthermore, we scale the results by 2**PASS1_BITS. */
-
 #define M1(i) inptr[DCTSIZE*i]
 #define M2(i, tmp) wsptr[DCTSIZE*i] = DESCALE(tmp, CONST_BITS-PASS1_BITS);
 	inptr = coef_block;
 	wsptr = workspace;
 	for (ctr = DCTSIZE; ctr > 0; ctr--, inptr++, wsptr++) {
-		/* Due to quantization, we will usually find that many of the input
-		 * coefficients are zero, especially the AC terms.  We can exploit this
-		 * by short-circuiting the IDCT calculation for any column in which all
-		 * the AC terms are zero.  In that case each output is equal to the
-		 * DC coefficient (with scale factor as needed).
-		 * With typical images and quantization tables, half or more of the
-		 * column DCT calculations can be simplified this way.
-		 */
-
 		if (!(inptr[DCTSIZE*1] | inptr[DCTSIZE*2] | inptr[DCTSIZE*3] | inptr[DCTSIZE*4] |
 				inptr[DCTSIZE*5] | inptr[DCTSIZE*6] | inptr[DCTSIZE*7])) {
 			/* AC terms all zero */
@@ -404,27 +383,14 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #undef M1
 #undef M2
 
-	/* Pass 2: process rows from work array, store into output array. */
-	/* Note that we must descale the results by a factor of 8 == 2**3, */
-	/* and also undo the PASS1_BITS scaling. */
-
 #define M1(i) wsptr[i]
 #define M2(i, tmp) outptr[i] = range_limit[DESCALE(tmp, CONST_BITS+PASS1_BITS+3) & RANGE_MASK];
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr++, wsptr += DCTSIZE, outptr += stride) {
-		/* Rows of zeroes can be exploited in the same way as we did with columns.
-		 * However, the column calculation has created many nonzero AC terms, so
-		 * the simplification applies less often (typically 5% to 10% of the time).
-		 * On machines with very fast multiplication, it's possible that the
-		 * test takes more time than it's worth.  In that case this section
-		 * may be commented out.
-		 */
-
 #ifndef NO_ZERO_ROW_TEST
 		if (!(wsptr[1] | wsptr[2] | wsptr[3] | wsptr[4] | wsptr[5] | wsptr[6] | wsptr[7])) {
 			/* AC terms all zero */
 			JSAMPLE dcval = range_limit[DESCALE(wsptr[0], PASS1_BITS+3) & RANGE_MASK];
-
 			outptr[0] = dcval;
 			outptr[1] = dcval;
 			outptr[2] = dcval;
@@ -436,7 +402,6 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 			continue;
 		}
 #endif
-
 		M3
 	}
 #undef M1
@@ -451,63 +416,42 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #undef SHL
 }
 
-static void idct_fslow(JCOEFPTR inptr, float *outptr) {
-	float tmp0, tmp1, tmp2, tmp3;
-	float tmp10, tmp11, tmp12, tmp13;
-	float z1, z2, z3, z4, z5;
-	float *wsptr, workspace[DCTSIZE2];
-	int ctr;
-
-#define M3(inc1, inc2) \
-	wsptr = workspace; \
-	for (ctr = 0; ctr < DCTSIZE; ctr++, inc1, inc2) { \
+static void idct_fslow(JCOEFPTR in, float *out) {
+	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+	float *ws, buf[DCTSIZE2]; int i;
+#define M3(inc1, inc2) ws = buf; \
+	for (i = 0; i < DCTSIZE; i++, inc1, inc2) { \
 		z2 = M1(2); z3 = M1(6); \
 		z1 = (z2 + z3) * 0.541196100f; \
-		tmp2 = z1 - z3 * 1.847759065f; \
-		tmp3 = z1 + z2 * 0.765366865f; \
+		t2 = z1 - z3 * 1.847759065f; \
+		t3 = z1 + z2 * 0.765366865f; \
 		z2 = M1(0); z3 = M1(4); \
-		tmp0 = z2 + z3; \
-		tmp1 = z2 - z3; \
-		tmp10 = tmp0 + tmp3; \
-		tmp13 = tmp0 - tmp3; \
-		tmp11 = tmp1 + tmp2; \
-		tmp12 = tmp1 - tmp2; \
-		tmp0 = M1(7); tmp1 = M1(5); tmp2 = M1(3); tmp3 = M1(1); \
-		z1 = tmp0 + tmp3; \
-		z2 = tmp1 + tmp2; \
-		z3 = tmp0 + tmp2; \
-		z4 = tmp1 + tmp3; \
-		z5 = (z3 + z4) * 1.175875602f; /* sqrt(2) * c3 */ \
-		tmp0 *= 0.298631336f; /* sqrt(2) * (-c1+c3+c5-c7) */ \
-		tmp1 *= 2.053119869f; /* sqrt(2) * ( c1+c3-c5+c7) */ \
-		tmp2 *= 3.072711026f; /* sqrt(2) * ( c1+c3+c5-c7) */ \
-		tmp3 *= 1.501321110f; /* sqrt(2) * ( c1+c3-c5-c7) */ \
-		z1 *= -0.899976223f; /* sqrt(2) * (c7-c3) */ \
-		z2 *= -2.562915447f; /* sqrt(2) * (-c1-c3) */ \
-		z3 *= -1.961570560f; /* sqrt(2) * (-c3-c5) */ \
-		z4 *= -0.390180644f; /* sqrt(2) * (c5-c3) */ \
-		z3 += z5; z4 += z5; \
-		tmp0 += z1 + z3; \
-		tmp1 += z2 + z4; \
-		tmp2 += z2 + z3; \
-		tmp3 += z1 + z4; \
-		M2(0, tmp10 + tmp3) \
-		M2(7, tmp10 - tmp3) \
-		M2(1, tmp11 + tmp2) \
-		M2(6, tmp11 - tmp2) \
-		M2(2, tmp12 + tmp1) \
-		M2(5, tmp12 - tmp1) \
-		M2(3, tmp13 + tmp0) \
-		M2(4, tmp13 - tmp0) \
+		t0 = z2 + z3; t1 = z2 - z3; \
+		t4 = t0 + t3; t7 = t0 - t3; \
+		t5 = t1 + t2; t6 = t1 - t2; \
+		t0 = M1(7); t1 = M1(5); t2 = M1(3); t3 = M1(1); \
+		z1 = t0 + t3; z2 = t1 + t2; \
+		z3 = t0 + t2; z4 = t1 + t3; \
+		z5 = (z3 + z4) * 1.175875602f; \
+		t0 *= 0.298631336f; t1 *= 2.053119869f; \
+		t2 *= 3.072711026f; t3 *= 1.501321110f; \
+		z1 *= 0.899976223f; z2 *= 2.562915447f; \
+		z3 *= 1.961570560f; z4 *= 0.390180644f; \
+		z3 -= z5; t0 -= z1 + z3; t2 -= z2 + z3; \
+		z4 -= z5; t1 -= z2 + z4; t3 -= z1 + z4; \
+		M2(0, t4 + t3) M2(7, t4 - t3) \
+		M2(1, t5 + t2) M2(6, t5 - t2) \
+		M2(2, t6 + t1) M2(5, t6 - t1) \
+		M2(3, t7 + t0) M2(4, t7 - t0) \
 	}
-#define M1(i) inptr[DCTSIZE*i]
-#define M2(i, tmp) wsptr[DCTSIZE*i] = tmp;
-	M3(inptr++, wsptr++)
+#define M1(i) in[DCTSIZE*i]
+#define M2(i, t) ws[DCTSIZE*i] = t;
+	M3(in++, ws++)
 #undef M1
 #undef M2
-#define M1(i) wsptr[i]
-#define M2(i, tmp) outptr[i] = (tmp) * 0.125f;
-	M3(wsptr += DCTSIZE, outptr += DCTSIZE)
+#define M1(i) ws[i]
+#define M2(i, t) out[i] = (t) * 0.125f;
+	M3(ws += DCTSIZE, out += DCTSIZE)
 #undef M1
 #undef M2
 #undef M3

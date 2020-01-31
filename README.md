@@ -13,7 +13,7 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 
 ## Usage
 
-`quantsmooth [options] input.jpg output.jpg`
+`jpegqs [options] input.jpg output.jpg`
 
 ## Options
 `--optimize`
@@ -39,16 +39,33 @@ After processing:<br>
 
 ## Buliding on Linux
 
-If you have "libjpeg-dev" package installed, just type `make`.
-Tested with packages from Ubuntu-18.04, and from sources: libjpeg (6b), libjpeg-turbo (1.4.2, 1.5.3, 2.0.4).
+If your system have *libjpeg* development package installed, just type `make`.
+Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04, and from sources: libjpeg (6b, 7, 8d, 9c), libjpeg-turbo (1.4.2, 1.5.3, 2.0.4).
 
-### With libjpeg 6b form sources
-```
-wget https://www.ijg.org/files/jpegsrc.v6b.tar.gz
-tar -xvzf jpegsrc.v6b.tar.gz
-(cd jpeg-6b && ./configure && make all)
-make LIBS="-I jpeg-6b jpeg-6b/libjpeg.a -lm"
-```
+### Building with libjpeg sources
+
+1. Download and extract *libjpeg* sources:
+    1. *libjpeg*, for example version 62
+    `wget https://www.ijg.org/files/jpegsrc.v6b.tar.gz`
+    `tar -xzf jpegsrc.v6b.tar.gz`
+    2. *libjpeg-turbo*, for example version 2.0.4
+    `wget -O libjpeg-turbo-2.0.4.tar.gz https://sourceforge.net/projects/libjpeg-turbo/files/2.0.4/libjpeg-turbo-2.0.4.tar.gz`
+    `tar -xzf libjpeg-turbo-2.0.4.tar.gz`
+
+- For a *libjpeg* (not *turbo*) you can build `jpegqs` in a simplier way:
+`make JPEGSRC=jpeg-6b`
+This uses static configuration from `jconfig.h`, which should work for common systems.
+The following items are not needed if you do so.
+
+2. Configure and build *libjpeg*, <srcdir>
+    1. For *libjpeg* and *libjpeg-turbo-1.x.x*:
+    `(cd jpeg-6b && ./configure && make all)`
+    2. For *libjpeg-turbo-2.x.x* `./configure` script is replaced with `cmake`:
+    `(cd libjpeg-turbo-2.0.4 && mkdir -p .libs && (cd .libs && cmake -G"Unix Makefiles" .. && make all))`
+
+3. Tell `make` where to find *libjpeg* includes and `libjpeg.a`
+`make JPEGLIB="-Ijpeg-6b jpeg-6b/libjpeg.a`
+For a newer versions `libjpeg.a` is located in a `.libs/` dir.
 
 ## Building on Windows
 Get [MSYS2](https://www.msys2.org/), install needed packages with pacman and build with __release.sh__.

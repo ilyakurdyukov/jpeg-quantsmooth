@@ -17,8 +17,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifdef NO_MATH_LIB
-#define roundf(x) (float)((int)((x) < 0 ? (x) - 0.5f : (x) + 0.5f))
+#ifdef NO_MATHLIB
+#define roundf(x) (float)(int)((x) < 0 ? (x) - 0.5f : (x) + 0.5f)
+#define fabsf(x) (float)((x) < 0 ? -(x) : (x))
+#else
+#include <math.h>
 #endif
 
 #ifdef WITH_LOG
@@ -45,20 +48,35 @@ static inline int64_t get_time_usec() {
 #endif
 #endif
 
-#if defined(__SSE4_1__)
-#define USE_SSE2
-#define USE_SSE4
-#include <smmintrin.h>
-#elif defined(__SSE2__)
+#ifndef NO_SIMD
+#if defined(__SSE2__)
 #define USE_SSE2
 #include <emmintrin.h>
+#endif
 
+#if defined(__SSSE3__)
+#include <tmmintrin.h>
+#else
+static inline __m128i SSE2_mm_abs_epi16(__m128i a) {
+	__m128i t = _mm_srai_epi16(a, 15);
+	return _mm_xor_si128(_mm_add_epi16(a, t), t);
+}
+#define _mm_abs_epi16 SSE2_mm_abs_epi16
+#endif
+
+#if defined(__SSE4_1__)
+#define USE_SSE4
+#include <smmintrin.h>
+#else
 #define _mm_cvtepu8_epi16(a) _mm_unpacklo_epi8(a, _mm_setzero_si128())
 // _mm_cmplt_epi16(a, _mm_setzero_si128()) or _mm_srai_epi16(a, 15)
 #define _mm_cvtepi16_epi32(a) _mm_unpacklo_epi16(a, _mm_srai_epi16(a, 15))
-#define _mm_abs_epi16(a) ({ \
-	__m128i __tmp = _mm_srai_epi16(a, 15); \
-	_mm_xor_si128(_mm_add_epi16(a, __tmp), __tmp); })
+static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
+	__m128i l = _mm_mul_epu32(a, b);
+	__m128i h = _mm_mul_epu32(_mm_bsrli_si128(a, 4), _mm_bsrli_si128(b, 4));
+	return _mm_unpacklo_epi64(_mm_unpacklo_epi32(l, h), _mm_unpackhi_epi32(l, h));
+}
+#define _mm_mullo_epi32 SSE2_mm_mullo_epi32
 #endif
 
 #ifdef __AVX2__
@@ -70,7 +88,7 @@ static inline int64_t get_time_usec() {
 #define USE_NEON
 #include <arm_neon.h>
 // for testing on x86
-#elif 0 && defined(__SSSE3__)
+#elif TEST_NEON && defined(__SSSE3__)
 #define USE_NEON
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -83,6 +101,8 @@ static inline int64_t get_time_usec() {
 #elif defined(__arm__)
 #warning compiling for ARM without NEON support
 #endif
+
+#endif // NO_SIMD
 
 #define ALIGN(n) __attribute__((aligned(n)))
 
@@ -326,7 +346,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #else
 		{
 			int p0, p1; float a0, a1, t;
-#define M2 t = (float)range-fabsf(a0); \
+#define M2 t = (float)range - fabsf(a0); \
 	if (t < 0) t = 0; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
 #define M1(yn, xn, xx, yy, i) for (y = 0; y < yn; y++) for (x = 0; x < xn; x++) { \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
@@ -356,9 +376,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 			a0 = ((a0 + (div >> 1)) / div) * div;
 			a0 = (a0 ^ sign) - sign;
 
-			if (a0 == 0) { dh = d0; dl = -d0; }
-			else if (a0 < 0) { dh = d1; dl = -d0; }
-			else { dh = d0; dl = -d1; }
+			dh = a0 < 0 ? d1 : d0;
+			dl = a0 > 0 ? -d1 : -d0;
 
 			add = coef1 - a0;
 			add -= roundf(a2);
