@@ -16,12 +16,10 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 `jpegqs [options] input.jpg output.jpg`
 
 ## Options
-`--optimize`
-Smaller output file.  
-`--verbose n`
-Print debug info form libjpeg.  
-`--info n`
-Print debug info from quantsmooth (on by default, set to 0 to disable).  
+
+`--optimize` Smaller output file.  
+`--verbose n` Print debug info form libjpeg.  
+`--info n` Print debug info from quantsmooth (on by default, set to 0 to disable).  
 
 ## Examples
 Note: Images 3x zoomed.
@@ -37,12 +35,12 @@ After processing:<br>
 ## Buliding on Linux
 
 If your system have *libjpeg* development package installed, just type `make`.
-Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04, and from sources: libjpeg (6b, 7, 8d, 9c), libjpeg-turbo (1.4.2, 1.5.3, 2.0.4).
+Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04.
 
 ### Building with libjpeg sources
 
 1. Download and extract *libjpeg* sources:
-    1. *libjpeg*, for example version 62  
+    1. *libjpeg*, for example version 6b  
     `wget https://www.ijg.org/files/jpegsrc.v6b.tar.gz`  
     `tar -xzf jpegsrc.v6b.tar.gz`
     2. *libjpeg-turbo*, for example version 2.0.4  
@@ -64,9 +62,20 @@ The following items are not needed if you do so.
 `make JPEGLIB="-Ijpeg-6b jpeg-6b/libjpeg.a`  
 For a newer versions `libjpeg.a` is located in a `.libs/` dir.
 
+### libjpeg build helper
+
+The `jpegqs` makefile can download sources, extract and compile `libjpeg` for you. Replace `%VER%` with a version.
+
+- libjpeg: `make jpeg-%VER%/libjpeg.a`
+Tested versions: 6b, 7, 8d, 9c
+- libjpeg-turbo:`make libjpeg-turbo-%VER%/libjpeg.a`
+Tested versions: 1.0.0, 1.4.2, 1.5.3, 2.0.4
+
+It will print you link to archive which you need to download, or you can allow the downloads by adding `WGET_CMD=wget` to the `make` command line.
+
 ## Building on Windows
 Get [MSYS2](https://www.msys2.org/), install needed packages with pacman and build with __release.sh__.
-If you not familiar with building unix applications on windows, then you can download program from [releases](https://github.com/ilyakurdyukov/jpeg-quantsmooth/releases).
+If you are not familiar with building unix applications on windows, then you can download program from [releases](https://github.com/ilyakurdyukov/jpeg-quantsmooth/releases).
 
 ## Alternatives and comparison
 
