@@ -137,16 +137,14 @@ static void quantsmooth_init() {
 	}
 }
 
-// When compiling with libjpeg-turbo and static linking, you can use
-// optimized idct_islow from library. Which will be faster if you don't have
-// processor with AVX2 support, but SSE2 is supported.
-
 #if defined(USE_JSIMD) && defined(LIBJPEG_TURBO_VERSION)
-EXTERN(void) jsimd_idct_islow_sse2(void *dct_table, JCOEFPTR coef_block, JSAMPARRAY output_buf, JDIMENSION output_col);
-#define idct_islow(coef, buf, st) jsimd_idct_islow_sse2(dct_table1, coef, output_buf, output_col)
-#define M1 1,1,1,1, 1,1,1,1
-static short dct_table1[DCTSIZE2] = { M1, M1, M1, M1, M1, M1, M1, M1 };
-#undef M1
+#define JSIMD_CONCAT(x) jsimd_idct_islow_##x
+#define JSIMD_NAME(x) JSIMD_CONCAT(x)
+EXTERN(void) JSIMD_NAME(USE_JSIMD)(void*, JCOEFPTR, JSAMPARRAY, JDIMENSION);
+#define idct_islow(coef, buf, st) JSIMD_NAME(USE_JSIMD)(dct_table1, coef, output_buf, output_col)
+#define X 1,1,1,1, 1,1,1,1
+static int16_t dct_table1[DCTSIZE2] = { X,X,X,X, X,X,X,X };
+#undef X
 #endif
 
 static const char zigzag_refresh[DCTSIZE2] = {
