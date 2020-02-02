@@ -5,9 +5,10 @@ SRCNAME ?= quantsmooth.c
 MFLAGS := -march=native
 # multithreading options
 MTOPTS := -fopenmp
+SRCS = src
 
 ifneq ($(SRCNAME),jpegqs-mini.c)
-$(APPNAME): quantsmooth.h idct.h
+$(APPNAME): $(SRCS)/quantsmooth.h $(SRCS)/idct.h
 endif
 
 CFLAGS_LIB := -Wall -O2 $(MFLAGS)
@@ -54,7 +55,7 @@ JPEGLIB = -ljpeg
 clean:
 	rm -f $(APPNAME)
 
-$(APPNAME): $(SRCNAME)
+$(APPNAME): $(SRCS)/$(SRCNAME)
 	$(CC) -DAPPNAME=$(APPNAME) $(CFLAGS_APP) -s -o $@ $< $(JPEGLIB) -lm
 else
 OBJDIR ?= $(JPEGSRC)
@@ -74,7 +75,7 @@ clean:
 $(OBJDIR)/%.o: $(JPEGSRC)/%.c
 	$(CC) $(CFLAGS_LIB) -I$(JPEGSRC) -I. -c -o $@ $<
 
-$(APPNAME): $(SRCNAME) $(OBJLIST)
+$(APPNAME): $(SRCS)/$(SRCNAME) $(OBJLIST)
 	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -DWITH_JPEGSRC -I$(JPEGSRC) -I. -s -o $@ $< $(OBJLIST) -lm
 endif
 
