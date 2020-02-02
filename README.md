@@ -5,7 +5,7 @@ Output saved as jpeg image with quantization set to 1 (like jpeg saved with 100%
 
 You may not notice jpeg artifacts on the screen without zooming in, but you may notice them after printing. Also, when editing compressed images, artifacts can accumulate, but if you use this program before editing - the result will be better.
 
-The original project page is [here][https://github.com/ilyakurdyukov/jpeg-quantsmooth].
+The original project page is [here](https://github.com/ilyakurdyukov/jpeg-quantsmooth).
 
 ## WebAssembly
 
