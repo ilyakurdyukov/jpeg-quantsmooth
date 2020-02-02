@@ -52,7 +52,6 @@ static inline int64_t get_time_usec() {
 #if defined(__SSE2__)
 #define USE_SSE2
 #include <emmintrin.h>
-#endif
 
 #if defined(__SSSE3__)
 #include <tmmintrin.h>
@@ -78,6 +77,7 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 }
 #define _mm_mullo_epi32 SSE2_mm_mullo_epi32
 #endif
+#endif // __SSE2__
 
 #ifdef __AVX2__
 #define USE_AVX2
@@ -88,13 +88,15 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 #define USE_NEON
 #include <arm_neon.h>
 // for testing on x86
-#elif TEST_NEON && defined(__SSSE3__)
+#elif defined(TEST_NEON) && defined(__SSSE3__)
 #define USE_NEON
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#define DO_PRAGMA(x) _Pragma(#x)
+#define X(x) DO_PRAGMA(GCC diagnostic ignored #x)
+X(-Wunused-function) X(-Wdeprecated-declarations)
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wsequence-point"
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+X(-Wsign-compare) X(-Woverflow) X(-Wunused-parameter)
+X(-Wsequence-point) X(-Wstrict-aliasing)
+#undef X
 #include "NEON_2_SSE.h"
 #pragma GCC diagnostic pop
 #warning NEON test build on x86
@@ -108,7 +110,7 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 
 #include "idct.h"
 
-static float ALIGN(32) quantsmooth_tables[DCTSIZE2][3*DCTSIZE2 + DCTSIZE];
+static float ALIGN(32) quantsmooth_tables[DCTSIZE2][3*DCTSIZE2 + 2*DCTSIZE];
 
 static void quantsmooth_init() {
 	int i; JCOEF coef[DCTSIZE2];
@@ -116,24 +118,27 @@ static void quantsmooth_init() {
 	range_limit_init();
 
 	for (i = 0; i < DCTSIZE2; i++) {
-		float *tab = quantsmooth_tables[i];
-		float bcoef = 2.0f;
-		int x, y, p0, p1;
+		float *tab = quantsmooth_tables[i], bcoef = 2.0f;
+		int x, y;
 		memset(coef, 0, sizeof(coef)); coef[i] = 1;
 		idct_fslow(coef, tab);
 
-#define M1(xx, yy, j) \
-	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
-	tab[j*DCTSIZE2+p0] = tab[p0] - tab[p1];
-		for (y = 0; y < DCTSIZE; y++) {
-			for (x = 0; x < DCTSIZE-1; x++) { M1(x+1,y,1) }
-			tab[DCTSIZE2+y*DCTSIZE+x] = tab[y*DCTSIZE+x] * bcoef;
-		}
-		for (y = 0; y < DCTSIZE-1; y++)
-		for (x = 0; x < DCTSIZE; x++) { M1(x,y+1,2) }
+#define M1(a, b, j) \
+	for (y = 0; y < DCTSIZE-1+a; y++) \
+	for (x = 0; x < DCTSIZE-1+b; x++) { \
+	int p0 = y*DCTSIZE+x, p1 = (y+b)*DCTSIZE+x+a; \
+	tab[j*DCTSIZE2+p0] = tab[p0] - tab[p1]; }
+		M1(1, 0, 1) M1(0, 1, 2)
 #undef M1
+		for (x = 0; x < DCTSIZE; x++) {
+			tab[2*DCTSIZE2+y*DCTSIZE+x] = 0;
+			tab[1*DCTSIZE2+x*DCTSIZE+y] = 0;
+		}
 		for (x = 0; x < DCTSIZE2; x++) tab[x] *= bcoef;
-		for (y = 0; y < DCTSIZE; y++) tab[3*DCTSIZE2+y] = tab[y*DCTSIZE];
+		for (y = 0; y < DCTSIZE; y++) {
+			tab[3*DCTSIZE2+y] = tab[y*DCTSIZE];
+			tab[3*DCTSIZE2+DCTSIZE+y] = tab[y*DCTSIZE+DCTSIZE-1];
+		}
 	}
 }
 
@@ -161,16 +166,17 @@ static const char zigzag_refresh[DCTSIZE2] = {
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, int stride) {
 
 	int k, x, y, flag = 1;
-	JSAMPLE ALIGN(32) buf[DCTSIZE2+DCTSIZE*2];
+	JSAMPLE ALIGN(32) buf[DCTSIZE2+DCTSIZE*4];
+	JSAMPLE *border = buf + DCTSIZE2+DCTSIZE*2;
 #ifdef USE_JSIMD
-	JSAMPROW output_buf[8] = { buf+8*0, buf+8*1, buf+8*2, buf+8*3, buf+8*4, buf+8*5, buf+8*6, buf+8*7 };
-	int output_col = 0;
+	JSAMPROW output_buf[DCTSIZE]; int output_col = 0;
+	for (k = 0; k < 8; k++) output_buf[k] = buf + k * DCTSIZE;
 #endif
 
 	(void)x;
 	for (y = 0; y < DCTSIZE; y++) {
 		buf[DCTSIZE2+y] = image[y*stride-1];
-		buf[DCTSIZE2+y+DCTSIZE] = image[y*stride+8];
+		buf[DCTSIZE2+y+DCTSIZE] = image[y*stride+DCTSIZE];
 	}
 
 	for (k = DCTSIZE2-1; k > 0; k--) {
@@ -180,6 +186,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		if (flag && zigzag_refresh[i]) {
 			idct_islow(coef, buf, DCTSIZE);
 			flag = 0;
+			for (y = 0; y < DCTSIZE; y++) {
+				border[y] = buf[y*DCTSIZE];
+				border[y+DCTSIZE] = buf[y*DCTSIZE+DCTSIZE-1];
+			}
 		}
 
 #if 1 && defined(USE_NEON)
@@ -213,7 +223,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 }
 
 #define VLDPIX(j, p) i##j = vld1_u8(p);
-#define VRIGHT(p) i1 = vext_u8(i0, vld1_dup_u8(p), 1);
+#define VRIGHT i1 = vext_u8(i0, i0, 1);
 #define VCOPY1 i0 = i1;
 
 #elif 1 && defined(USE_AVX2)
@@ -241,7 +251,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	a3 = _mm_cvtss_f32(_mm256_extractf128_ps(f0, 1));
 
 #define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
-#define VRIGHT(p) v1 = _mm_insert_epi16(_mm_bsrli_si128(v0, 2), *(JSAMPLE*)(p), 7);
+#define VRIGHT v1 = _mm_bsrli_si128(v0, 2);
 #define VCOPY1 v0 = v1;
 
 #elif 1 && defined(USE_SSE2)
@@ -273,22 +283,22 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	a3 = _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
 
 #define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
-#define VRIGHT(p) v1 = _mm_insert_epi16(_mm_bsrli_si128(v0, 2), *(JSAMPLE*)(p), 7);
+#define VRIGHT v1 = _mm_bsrli_si128(v0, 2);
 #define VCOPY1 v0 = v1;
 #elif 1 // vector code simulation
 #define VINIT \
-	int i; JSAMPLE *p0, *p1, rborder[8]; \
+	int j; JSAMPLE *p0, *p1, temp[8]; \
 	float sum[8] = { 0,0,0,0, 0,0,0,0 };
 
 #define VCORE(tab) \
-	for (i = 0; i < 4; i++) { \
+	for (j = 0; j < 4; j++) { \
 		float a0, a1, a4, a5, f0; \
-		VCORE1(i, a0, a1, tab) VCORE1(i+4, a4, a5, tab) \
-		sum[i] += a0 + a4; sum[i+4] += a1 + a5; \
+		VCORE1(j, a0, a1, tab) VCORE1(j+4, a4, a5, tab) \
+		sum[j] += a0 + a4; sum[j+4] += a1 + a5; \
 	}
 
-#define VCORE1(i, a0, a1, tab) \
-	a0 = p0[i] - p1[i]; a1 = (tab)[i]; \
+#define VCORE1(j, a0, a1, tab) \
+	a0 = p0[j] - p1[j]; a1 = (tab)[j]; \
 	f0 = (float)range-fabsf(a0); if (f0 < 0) f0 = 0; f0 *= f0; \
 	a0 *= f0; a1 *= f0; a0 *= a1; a1 *= a1;
 
@@ -297,27 +307,19 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	a3 = (sum[4] + sum[6]) + (sum[5] + sum[7]);
 
 #define VLDPIX(i, a) p##i = a;
-#define VRIGHT(p) p1 = rborder; memcpy(p1, p0 + 1, 7 * sizeof(JSAMPLE)); p1[7] = *(p);
+#define VRIGHT p1 = temp; memcpy(p1, p0 + 1, 7 * sizeof(JSAMPLE)); p1[7] = 0;
 #define VCOPY1 p0 = p1;
 #endif
 
 #ifdef VINIT
 		{
-			JSAMPLE lborder[8];
 			VINIT
 
+			if (i & 7)
 			for (y = 0; y < DCTSIZE; y++) {
-				lborder[y] = buf[y*DCTSIZE];
 				VLDPIX(0, buf+y*DCTSIZE)
-				VRIGHT(buf+DCTSIZE2+DCTSIZE+y)
+				VRIGHT
 				VCORE(tab+64+y*DCTSIZE)
-			}
-
-			VLDPIX(0, buf)
-			for (y = 0; y < DCTSIZE-1; y++) {
-				VLDPIX(1, buf+y*DCTSIZE+DCTSIZE)
-				VCORE(tab+64*2+y*DCTSIZE)
-				VCOPY1
 			}
 
 			VLDPIX(0, buf)
@@ -326,9 +328,22 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 			VLDPIX(0, buf+7*DCTSIZE)
 			VLDPIX(1, image+8*stride)
 			VCORE(tab+7*DCTSIZE)
-			VLDPIX(0, lborder)
+
+			VLDPIX(0, border)
 			VLDPIX(1, buf+DCTSIZE2)
 			VCORE(tab+3*DCTSIZE2)
+			VLDPIX(0, border+DCTSIZE)
+			VLDPIX(1, buf+DCTSIZE2+DCTSIZE)
+			VCORE(tab+3*DCTSIZE2+DCTSIZE)
+
+			if (i > 7) {
+				VLDPIX(0, buf)
+				for (y = 0; y < DCTSIZE-1; y++) {
+					VLDPIX(1, buf+y*DCTSIZE+DCTSIZE)
+					VCORE(tab+64*2+y*DCTSIZE)
+					VCOPY1
+				}
+			}
 
 			VFIN
 		}
@@ -344,22 +359,22 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #else
 		{
 			int p0, p1; float a0, a1, t;
-#define M2 t = (float)range - fabsf(a0); \
+#define CORE t = (float)range - fabsf(a0); \
 	if (t < 0) t = 0; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
 #define M1(yn, xn, xx, yy, i) for (y = 0; y < yn; y++) for (x = 0; x < xn; x++) { \
 	p0 = y*DCTSIZE+x; p1 = (yy)*DCTSIZE+(xx); \
-	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; M2 }
+	a0 = buf[p0] - buf[p1]; a1 = tab[i*64+p0]; CORE }
+#define M2(z, xx, yy) for (z = 0; z < 8; z++) { p0 = y*DCTSIZE+x; \
+	a0 = buf[p0] - image[(yy)*stride+(xx)]; a1 = tab[p0]; CORE }
 			if (i & 7) M1(8,7,x+1,y,1)
+			y = 0; M2(x,x,y-1)
+			y = 7; M2(x,x,y+1)
+			x = 0; M2(y,x-1,y)
+			x = 7; M2(y,x+1,y)
 			if (i > 7) M1(7,8,x,y+1,2)
-#undef M1
-#define M1(z, xx, yy) for (z = 0; z < 8; z++) { p0 = y*DCTSIZE+x; \
-	a0 = buf[p0] - image[(yy)*stride+(xx)]; a1 = tab[p0]; M2 }
-			y = 0; M1(x,x,y-1)
-			y = 7; M1(x,x,y+1)
-			x = 0; M1(y,x-1,y)
-			x = 7; M1(y,x+1,y)
-#undef M1
 #undef M2
+#undef M1
+#undef CORE
 		}
 #endif
 

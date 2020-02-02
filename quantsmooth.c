@@ -36,6 +36,9 @@
 #endif
 
 #include "jpeglib.h"
+#ifdef WITH_JPEGSRC
+#include "jversion.h"
+#endif
 
 #ifdef WASM
 #define logfmt(...) printf(__VA_ARGS__)
@@ -225,6 +228,9 @@ int main(int argc, char **argv) {
 #else
 		logfmt("Compiled with libjpeg version %d\n", JPEG_LIB_VERSION);
 #endif
+#if defined(JVERSION) && defined(JCOPYRIGHT)
+		logfmt("Version string: " JVERSION "\n" JCOPYRIGHT "\n\n");
+#else
 		// Search for libjpeg copyright (to work with static and dynamic linking)
 		{
 			int i, n = jsrcerr.last_jpeg_message;
@@ -241,12 +247,12 @@ int main(int argc, char **argv) {
 					if (ver && (ver[0] < '0' || ver[0] > '9')) ver = NULL;
 				}
 				if (!ver) ver = "not found";
-				logfmt("Version string: %s\n%s\n", ver, msg);
+				logfmt("Version string: %s\n%s\n\n", ver, msg);
 			} else {
-				logfmt("Copyright not found\n");
+				logfmt("Copyright not found\n\n");
 			}
 		}
-		logfmt("\n");
+#endif
 		verbose_level--;
 #ifndef WASM
 		if (argc == 1) return 1;

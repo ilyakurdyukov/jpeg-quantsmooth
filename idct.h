@@ -34,18 +34,6 @@ static const char jpeg_natural_order[DCTSIZE2] = {
 
 static JSAMPLE range_limit_static[11 * CENTERJSAMPLE];
 
-static void range_limit_init() {
-	int i, c = CENTERJSAMPLE, m = c * 2;
-	JSAMPLE *t = range_limit_static;
-
-	for (i = 0; i < m; i++) t[i] = 0;
-	t += m;
-	for (i = 0; i < m; i++) t[i] = i;
-	for (; i < 2 * m + c; i++) t[i] = m - 1;
-	for (; i < 4 * m; i++) t[i] = 0;
-	for (i = 0; i < c; i++) t[4 * m + i] = i;
-}
-
 #ifndef USE_JSIMD
 
 #define CONST_BITS  13
@@ -330,6 +318,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #undef M1
 	}
 #else
+#define NEED_RANGELIMIT
 	int32_t tmp0, tmp1, tmp2, tmp3;
 	int32_t tmp10, tmp11, tmp12, tmp13;
 	int32_t z1, z2, z3, z4, z5;
@@ -402,6 +391,22 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #undef SHL
 }
 #endif // USE_JSIMD
+
+static void range_limit_init() {
+	JSAMPLE *t = range_limit_static;
+#ifdef NEED_RANGELIMIT
+	int i, c = CENTERJSAMPLE, m = c * 2;
+
+	for (i = 0; i < m; i++) t[i] = 0;
+	t += m;
+	for (i = 0; i < m; i++) t[i] = i;
+	for (; i < 2 * m + c; i++) t[i] = m - 1;
+	for (; i < 4 * m; i++) t[i] = 0;
+	for (i = 0; i < c; i++) t[4 * m + i] = i;
+#else
+	(void)t;
+#endif
+}
 
 static void idct_fslow(JCOEFPTR in, float *out) {
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;

@@ -5,6 +5,8 @@ Output saved as jpeg image with quantization set to 1 (like jpeg saved with 100%
 
 You may not notice jpeg artifacts on the screen without zooming in, but you may notice them after printing. Also, when editing compressed images, artifacts can accumulate, but if you use this program before editing - the result will be better.
 
+The original project page is [here][https://github.com/ilyakurdyukov/jpeg-quantsmooth].
+
 ## WebAssembly
 
 Web version available [here](https://ilyakurdyukov.github.io/jpeg-quantsmooth/).
@@ -74,6 +76,7 @@ Tested versions: 1.0.0, 1.4.2, 1.5.3, 2.0.4
 It will print you link to archive which you need to download, or you can allow the downloads by adding `WGET_CMD=wget` to the `make` command line.
 
 ## Building on Windows
+
 Get [MSYS2](https://www.msys2.org/), install needed packages with pacman and build with __release.sh__.
 If you are not familiar with building unix applications on windows, then you can download program from [releases](https://github.com/ilyakurdyukov/jpeg-quantsmooth/releases).
 
@@ -81,7 +84,7 @@ If you are not familiar with building unix applications on windows, then you can
 
 Similar projects, and how I see them after some testing.
 
-[jpeg2png](https://github.com/victorvde/jpeg2png):  
+[**jpeg2png**](https://github.com/victorvde/jpeg2png):  
 &nbsp;✔️ good documentation and math model  
 &nbsp;✔️ has tuning options  
 &nbsp;✔️ better at deblocking low quality JPEG images  
@@ -91,7 +94,7 @@ Similar projects, and how I see them after some testing.
 
 **jpeg2png** can provide roughly same quality (better in not common cases), but significantly slower.
 
-[knusperli](https://github.com/google/knusperli):  
+[**knusperli**](https://github.com/google/knusperli):  
 &nbsp;✔️ more permissive license (Apache-2.0)  
 &nbsp;➖ you can hardly see any improvements on the image  
 &nbsp;➖ no performance optimizations (but roughly same speed as for <b>quantsmooth</b> with optimizations)  
