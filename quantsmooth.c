@@ -215,11 +215,50 @@ int main(int argc, char **argv) {
 		logfmt("Unrecognized command line option.\n");
 		return 1;
 	}
+#endif
+
+	srcinfo.err = jpeg_std_error(&jsrcerr);
+
+	if (verbose_level) {
+#ifdef LIBJPEG_TURBO_VERSION
+		logfmt("Compiled with libjpeg-turbo version %s\n", TOSTRING(LIBJPEG_TURBO_VERSION));
 #else
+		logfmt("Compiled with libjpeg version %d\n", JPEG_LIB_VERSION);
+#endif
+		// Search for libjpeg copyright (to work with static and dynamic linking)
+		{
+			int i, n = jsrcerr.last_jpeg_message;
+			const char *msg, *ver = NULL;
+			for (i = 0; i < n; i++) {
+				msg = jsrcerr.jpeg_message_table[i];
+				if (msg && !memcmp(msg, "Copyright", 9)) break;
+			}
+			if (i != n) {
+				if (i + 1 < n) {
+					// version should be next to copyright
+					ver = jsrcerr.jpeg_message_table[i + 1];
+					// check that it starts with a number
+					if (ver && (ver[0] < '0' || ver[0] > '9')) ver = NULL;
+				}
+				if (!ver) ver = "not found";
+				logfmt("Version string: %s\n%s\n", ver, msg);
+			} else {
+				logfmt("Copyright not found\n");
+			}
+		}
+		logfmt("\n");
+		verbose_level--;
+#ifndef WASM
+		if (argc == 1) return 1;
+#endif
+	}
+
+#ifndef WASM
 	if (argc != 3) {
 		logfmt(
 "JPEG Quant Smooth : Copyright (c) 2020 Ilya Kurdyukov\n"
 "Build date: " __DATE__ "\n"
+"Uses libjpeg, run with \"--verbose 1\" to show its version and copyright\n"
 "\n"
 "Usage:\n"
 "  %s [options] input.jpg output.jpg\n"
@@ -233,16 +272,6 @@ int main(int argc, char **argv) {
 	}
 #endif
 
-	if (verbose_level) {
-#ifdef LIBJPEG_TURBO_VERSION
-		logfmt("using libjpeg-turbo version %s\n", TOSTRING(LIBJPEG_TURBO_VERSION));
-#else
-		logfmt("using libjpeg version %d\n", JPEG_LIB_VERSION);
-#endif
-		verbose_level--;
-	}
-
-	srcinfo.err = jpeg_std_error(&jsrcerr);
 	jpeg_create_decompress(&srcinfo);
 	dstinfo.err = jpeg_std_error(&jdsterr);
 	jpeg_create_compress(&dstinfo);
