@@ -239,7 +239,7 @@ int main(int argc, char **argv) {
 				msg = jsrcerr.jpeg_message_table[i];
 				if (msg && !memcmp(msg, "Copyright", 9)) break;
 			}
-			if (i != n) {
+			if (i < n) {
 				if (i + 1 < n) {
 					// version should be next to copyright
 					ver = jsrcerr.jpeg_message_table[i + 1];

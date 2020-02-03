@@ -1,14 +1,15 @@
 
-APPNAME ?= jpegqs
 SRCNAME ?= quantsmooth.c
+ifeq ($(SRCNAME),jpegqs-mini.c)
+APPNAME ?= jpegqs-mini
+else
+APPNAME ?= jpegqs
+$(APPNAME): quantsmooth.h idct.h
+endif
 # machine flags
 MFLAGS := -march=native
 # multithreading options
 MTOPTS := -fopenmp
-
-ifneq ($(SRCNAME),jpegqs-mini.c)
-$(APPNAME): quantsmooth.h idct.h
-endif
 
 CFLAGS_LIB := -Wall -O2 $(MFLAGS)
 CFLAGS_APP := $(CFLAGS_LIB) -Wextra -pedantic $(MTOPTS)
