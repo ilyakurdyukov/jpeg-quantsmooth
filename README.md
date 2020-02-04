@@ -25,6 +25,9 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 `--niter n` Number of iterations (default is 3)  
 `--quality n` Quality setting (1-4, default is 3)  
 
+- The processing time includes only the smoothing algorithm, jpeg reading and writing time is not included.
+- More iterations can make the result look like CG art, can make the photos look unnatural.
+
 ## Examples
 Note: Images 3x zoomed.
 <p align="center"><b>

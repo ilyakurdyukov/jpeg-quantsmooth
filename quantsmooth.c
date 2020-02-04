@@ -181,8 +181,8 @@ int main(int argc, char **argv) {
 #endif
 
 	int optimize = 0, verbose_level = 0;
-	int jpegqs_info = 15, jpegqs_iter = 3;
-	int32_t jpegqs_flags = 0;
+	int cmd_info = 15, quality = 3, cmd_niter = -1;
+	int32_t jpegqs_flags;
 #ifdef WASM
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
@@ -213,19 +213,13 @@ int main(int argc, char **argv) {
 			verbose_level = atoi(argv[2]);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--info")) {
-			jpegqs_info = atoi(argv[2]);
+			cmd_info = atoi(argv[2]);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--niter")) {
-			jpegqs_iter = atoi(argv[2]);
-			if (jpegqs_iter < 0) jpegqs_iter = 0;
-			if (jpegqs_iter > JPEGQS_ITER_MAX) jpegqs_iter = JPEGQS_ITER_MAX;
+			cmd_niter = atoi(argv[2]);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--quality")) {
-			int q = atoi(argv[2]);
-			jpegqs_iter = 3; jpegqs_flags = 0;
-			if (q <= 1) jpegqs_iter = 1;
-			else if (q <= 2) jpegqs_iter = 2;
-			else if (q >= 4) jpegqs_flags = JPEGQS_DIAGONALS; 
+			quality = atoi(argv[2]);
 			argv += 2; argc -= 2;
 		} else if (!strcmp(arg, "--")) {
 			argv++; argc--;
@@ -234,8 +228,19 @@ int main(int argc, char **argv) {
 		else break;
 	}
 
-	jpegqs_flags |= jpegqs_info & JPEGQS_INFO_MASK;
-	jpegqs_flags |= jpegqs_iter << JPEGQS_ITER_SHIFT;
+	{
+		int niter = 3, flags = 0;
+		if (quality <= 1) niter = 1;
+		else if (quality <= 2) niter = 2;
+		else if (quality >= 4) flags = JPEGQS_DIAGONALS;
+
+		niter = cmd_niter >= 0 ? cmd_niter : niter;
+		if (niter > JPEGQS_ITER_MAX) niter = JPEGQS_ITER_MAX;
+
+		jpegqs_flags = flags;
+		jpegqs_flags |= cmd_info & JPEGQS_INFO_MASK;
+		jpegqs_flags |= niter << JPEGQS_ITER_SHIFT;
+	}
 
 #ifdef WASM
 	free(argv_ptr);
