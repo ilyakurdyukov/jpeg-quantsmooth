@@ -180,7 +180,9 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, verbose_level = 0, smooth_info = 0xf;
+	int optimize = 0, verbose_level = 0;
+	int jpegqs_info = 15, jpegqs_iter = 3;
+	int32_t jpegqs_flags = 0;
 #ifdef WASM
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
@@ -193,24 +195,47 @@ int main(int argc, char **argv) {
 #endif
 
 	while (argc > 1) {
-		if (!strcmp(argv[1], "--optimize")) {
+		const char *arg = argv[1];
+		if (arg[0] != '-') break;
+		if (!arg[1]) break;
+		if (!arg[2]) switch (arg[1]) {
+			case 'o': arg = "--optimize"; break;
+			case 'v': arg = "--verbose"; break;
+			case 'i': arg = "--info"; break;
+			case 'n': arg = "--niter"; break;
+			case 'q': arg = "--quality"; break;
+		}
+
+		if (!strcmp(arg, "--optimize")) {
 			optimize = 1;
 			argv++; argc--;
-		}
-		else if (argc > 2 && !strcmp(argv[1], "--verbose")) {
+		} else if (argc > 2 && !strcmp(arg, "--verbose")) {
 			verbose_level = atoi(argv[2]);
 			argv += 2; argc -= 2;
-		}
-		else if (argc > 2 && !strcmp(argv[1], "--info")) {
-			smooth_info = atoi(argv[2]);
+		} else if (argc > 2 && !strcmp(arg, "--info")) {
+			jpegqs_info = atoi(argv[2]);
 			argv += 2; argc -= 2;
-		}
-		else if (!strcmp(argv[1], "--")) {
+		} else if (argc > 2 && !strcmp(arg, "--niter")) {
+			jpegqs_iter = atoi(argv[2]);
+			if (jpegqs_iter < 0) jpegqs_iter = 0;
+			if (jpegqs_iter > JPEGQS_ITER_MAX) jpegqs_iter = JPEGQS_ITER_MAX;
+			argv += 2; argc -= 2;
+		} else if (argc > 2 && !strcmp(arg, "--quality")) {
+			int q = atoi(argv[2]);
+			jpegqs_iter = 3; jpegqs_flags = 0;
+			if (q <= 1) jpegqs_iter = 1;
+			else if (q <= 2) jpegqs_iter = 2;
+			else if (q >= 4) jpegqs_flags = JPEGQS_DIAGONALS; 
+			argv += 2; argc -= 2;
+		} else if (!strcmp(arg, "--")) {
 			argv++; argc--;
 			break;
 		}
 		else break;
 	}
+
+	jpegqs_flags |= jpegqs_info & JPEGQS_INFO_MASK;
+	jpegqs_flags |= jpegqs_iter << JPEGQS_ITER_SHIFT;
 
 #ifdef WASM
 	free(argv_ptr);
@@ -270,9 +295,12 @@ int main(int argc, char **argv) {
 "  %s [options] input.jpg output.jpg\n"
 "\n"
 "Options:\n"
-"  --optimize        Optimize Huffman table (smaller file, but slow compression)\n"
-"  --verbose level   Print libjpeg debug output\n"
-"  --info flags      Print quantsmooth debug output\n"
+"  --optimize       Option for libjpeg to produce smaller output file\n"
+"  --verbose n      Print libjpeg debug output\n"
+"  --info n         Print quantsmooth debug output:\n"
+"                   0 - silent, 8 - processing time, 15 - all (default)\n"
+"  --niter n        Number of iterations (default is 3)\n"
+"  --quality n      Quality setting (1-4, default is 3)\n"
 "\n", progname);
 		return 1;
 	}
@@ -323,7 +351,7 @@ int main(int argc, char **argv) {
 
 	(void) jpeg_read_header(&srcinfo, TRUE);
 	src_coef_arrays = jpeg_read_coefficients(&srcinfo);
-	do_quantsmooth(&srcinfo, src_coef_arrays, smooth_info);
+	do_quantsmooth(&srcinfo, src_coef_arrays, jpegqs_flags);
 
 	jpeg_copy_critical_parameters(&srcinfo, &dstinfo);
 	if (optimize) dstinfo.optimize_coding = TRUE;

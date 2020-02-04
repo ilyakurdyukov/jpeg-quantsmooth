@@ -19,9 +19,11 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 
 ## Options
 
-`--optimize` Smaller output file.  
-`--verbose n` Print debug info form libjpeg.  
-`--info n` Print debug info from quantsmooth (on by default, set to 0 to disable).  
+`--optimize` Option for libjpeg to produce smaller output file  
+`--verbose n` Print libjpeg debug output  
+`--info n` Print quantsmooth debug output: 0 - silent, 8 - processing time, 15 - all (default)  
+`--niter n` Number of iterations (default is 3)  
+`--quality n` Quality setting (1-4, default is 3)  
 
 ## Examples
 Note: Images 3x zoomed.
