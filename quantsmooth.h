@@ -162,7 +162,7 @@ static const char zigzag_refresh[DCTSIZE2] = {
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, int stride) {
 	int k, n = DCTSIZE, x, y, flag = 1;
-	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 4];
+	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifdef USE_JSIMD
 	JSAMPROW output_buf[DCTSIZE]; int output_col = 0;
 	for (k = 0; k < n; k++) output_buf[k] = buf + k * n;
@@ -256,7 +256,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
 #define VRIGHT v1 = _mm_bsrli_si128(v0, 2);
 #define VCOPY1 v0 = v1;
-#elif 1 // vector code simulation
+#elif !defined(NO_SIMD) // vector code simulation
 #define VINIT \
 	int j; JSAMPLE *p0, *p1; float a0, a1, f0, sum[DCTSIZE * 2]; \
 	for (j = 0; j < n * 2; j++) sum[j] = 0;
@@ -279,13 +279,12 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #define VCOPY1 p0 = p1;
 #endif
 
-#ifdef VINIT
-	JSAMPLE *border = buf + n * n;
 	for (y = 0; y < n; y++) {
-		border[y + n * 2] = image[y * stride - 1];
-		border[y + n * 3] = image[y * stride + n];
+		border[y + n * 2] = image[y - stride];
+		border[y + n * 3] = image[y + stride * n];
+		border[y + n * 4] = image[y * stride - 1];
+		border[y + n * 5] = image[y * stride + n];
 	}
-#endif
 
 	(void)x;
 	for (k = n * n - 1; k > 0; k--) {
@@ -316,17 +315,17 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 			tab += n * n;
 
 			VLDPIX(0, buf)
-			VLDPIX(1, image - stride)
+			VLDPIX(1, border + n * 2)
 			VCORE(tab) tab += n;
 			VLDPIX(0, buf + n * n - n)
-			VLDPIX(1, image + n * stride)
+			VLDPIX(1, border + n * 3)
 			VCORE(tab) tab += n;
 
 			VLDPIX(0, border)
-			VLDPIX(1, border + n * 2)
+			VLDPIX(1, border + n * 4)
 			VCORE(tab) tab += n;
 			VLDPIX(0, border + n)
-			VLDPIX(1, border + n * 3)
+			VLDPIX(1, border + n * 5)
 			VCORE(tab) tab += n;
 
 			if (i > (n - 1)) {
@@ -358,11 +357,11 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 	for (y = 0; y < n - 1 + a; y++) \
 	for (x = 0; x < n - 1 + b; x++) { p = y * n + x; \
 	a0 = buf[p] - buf[(y + b) * n + x + a]; a1 = tab[p]; CORE }
-#define M2(z, xx, yy) for (z = 0; z < n; z++) { p = y * n + x; \
-	a0 = buf[p] - image[(yy) * stride + xx]; a1 = *tab++; CORE }
+#define M2(z, i) for (z = 0; z < n; z++) { p = y * n + x; \
+	a0 = buf[p] - border[i * n + z]; a1 = *tab++; CORE }
 			if (i & (n - 1)) M1(1, 0) tab += n * n;
-			y = 0; M2(x, x, y - 1) y = n - 1; M2(x, x, y + 1)
-			x = 0; M2(y, x - 1, y) x = n - 1; M2(y, x + 1, y)
+			y = 0; M2(x, 2) y = n - 1; M2(x, 3)
+			x = 0; M2(y, 4) x = n - 1; M2(y, 5)
 			if (i > (n - 1)) M1(0, 1)
 #undef M2
 #undef M1
