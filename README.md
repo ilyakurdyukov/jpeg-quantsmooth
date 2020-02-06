@@ -10,8 +10,8 @@ The original project page is [here](https://github.com/ilyakurdyukov/jpeg-quants
 ## WebAssembly
 
 Web version available [here](https://ilyakurdyukov.github.io/jpeg-quantsmooth/).
-Runs in your browser, none of your data is send outside.
-But without multithreading and SIMD optimizations it works noticeably slower.
+Images are processed locally on your computer.
+Without multithreading and SIMD optimizations it runs slower than native code.
 
 ## Usage
 
@@ -19,17 +19,19 @@ But without multithreading and SIMD optimizations it works noticeably slower.
 
 ## Options
 
-`--optimize` Option for libjpeg to produce smaller output file  
-`--verbose n` Print libjpeg debug output  
-`--info n` Print quantsmooth debug output: 0 - silent, 8 - processing time, 15 - all (default)  
-`--niter n` Number of iterations (default is 3)  
-`--quality n` Quality setting (1-4, default is 3)  
+`-q, --quality n` Quality setting (1-4, default is 3)  
+`-n, --niter n` Number of iterations (default is 3)  
+`-o, --optimize` Option for libjpeg to produce smaller output file  
+`-v, --verbose n` Print libjpeg debug output  
+`-i, --info n` Print quantsmooth debug output: 0 - silent, 8 - processing time, 15 - all (default)  
 
 - The processing time includes only the smoothing algorithm, jpeg reading and writing time is not included.
 - More iterations can make the result look like CG art, can make the photos look unnatural.
 
 ## Examples
-Note: Images 3x zoomed.
+
+- Images 3x zoomed.
+
 <p align="center"><b>
 Original images:<br>
 <img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/text_orig.png"> <img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/lena_orig.png"><br>

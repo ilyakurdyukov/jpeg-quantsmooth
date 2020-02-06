@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, verbose_level = 0;
+	int optimize = 0, jpeg_verbose = 0;
 	int cmd_info = 15, quality = 3, cmd_niter = -1;
 	int32_t jpegqs_flags;
 #ifdef WASM
@@ -195,31 +195,40 @@ int main(int argc, char **argv) {
 #endif
 
 	while (argc > 1) {
-		const char *arg = argv[1];
-		if (arg[0] != '-') break;
-		if (!arg[1]) break;
-		if (!arg[2]) switch (arg[1]) {
-			case 'o': arg = "--optimize"; break;
+		const char *arg1 = argv[1], *arg2 = argv[2], *arg = arg1; char c;
+		if (arg[0] != '-' || !(c = arg[1])) break;
+		if (c != '-') switch (c) {
+			case 'o': arg = "--optimize"; c = 0; break;
 			case 'v': arg = "--verbose"; break;
 			case 'i': arg = "--info"; break;
 			case 'n': arg = "--niter"; break;
 			case 'q': arg = "--quality"; break;
+			default: c = '-';
+		}
+		if (c != '-' && arg1[2]) {
+			if (!c) break;
+			arg2 = arg1 + 2; argc++; argv--;
 		}
 
+#define CHECKNUM if ((unsigned)(arg2[0] - '0') > 9) break;
 		if (!strcmp(arg, "--optimize")) {
 			optimize = 1;
 			argv++; argc--;
 		} else if (argc > 2 && !strcmp(arg, "--verbose")) {
-			verbose_level = atoi(argv[2]);
+			CHECKNUM
+			jpeg_verbose = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--info")) {
-			cmd_info = atoi(argv[2]);
+			CHECKNUM
+			cmd_info = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--niter")) {
-			cmd_niter = atoi(argv[2]);
+			CHECKNUM
+			cmd_niter = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--quality")) {
-			quality = atoi(argv[2]);
+			CHECKNUM
+			quality = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (!strcmp(arg, "--")) {
 			argv++; argc--;
@@ -252,7 +261,7 @@ int main(int argc, char **argv) {
 
 	srcinfo.err = jpeg_std_error(&jsrcerr);
 
-	if (verbose_level) {
+	if (jpeg_verbose) {
 #ifdef LIBJPEG_TURBO_VERSION
 		logfmt("Compiled with libjpeg-turbo version %s\n", TOSTRING(LIBJPEG_TURBO_VERSION));
 #else
@@ -283,7 +292,7 @@ int main(int argc, char **argv) {
 			}
 		}
 #endif
-		verbose_level--;
+		jpeg_verbose--;
 #ifndef WASM
 		if (argc == 1) return 1;
 #endif
@@ -300,12 +309,12 @@ int main(int argc, char **argv) {
 "  %s [options] input.jpg output.jpg\n"
 "\n"
 "Options:\n"
-"  --optimize       Option for libjpeg to produce smaller output file\n"
-"  --verbose n      Print libjpeg debug output\n"
-"  --info n         Print quantsmooth debug output:\n"
-"                   0 - silent, 8 - processing time, 15 - all (default)\n"
-"  --niter n        Number of iterations (default is 3)\n"
-"  --quality n      Quality setting (1-4, default is 3)\n"
+"  -q, --quality n   Quality setting (1-4, default is 3)\n"
+"  -n, --niter n     Number of iterations (default is 3)\n"
+"  -o, --optimize    Option for libjpeg to produce smaller output file\n"
+"  -v, --verbose n   Print libjpeg debug output\n"
+"  -i, --info n      Print quantsmooth debug output:\n"
+"                      0 - silent, 8 - processing time, 15 - all (default)\n"
 "\n", progname);
 		return 1;
 	}
@@ -315,7 +324,7 @@ int main(int argc, char **argv) {
 	dstinfo.err = jpeg_std_error(&jdsterr);
 	jpeg_create_compress(&dstinfo);
 
-	jsrcerr.trace_level = jdsterr.trace_level = verbose_level;
+	jsrcerr.trace_level = jdsterr.trace_level = jpeg_verbose;
 	srcinfo.mem->max_memory_to_use = dstinfo.mem->max_memory_to_use;
 
 #ifdef WASM

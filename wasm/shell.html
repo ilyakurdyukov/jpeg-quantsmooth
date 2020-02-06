@@ -88,7 +88,7 @@ window.onerror = function() {
 var output_data = null;
 
 function cbProcess(input) {
-	var cmdline = document.getElementById("cmdline").value;
+	var cmdline = document.getElementById('cmdline').value;
 	var cmd_size = cmdline.length;
 
 	var inp_size = input.byteLength;
@@ -144,7 +144,7 @@ function initDrop() {
 
 function readFile(file) {
 	Module.print("Loading \"" + file.name + "\"");
-	document.getElementById("filename").value = file.name;
+	document.getElementById('filename').value = file.name;
 
 	var reader = new FileReader();
 	reader.onload = function(e) {
@@ -172,8 +172,8 @@ function cbSave() {
 	if (output_data !== null) {
 		var blob = new Blob([output_data], {type: "application/unknown"});
 		var link = document.createElement('a');
-		link.href = window.URL.createObjectURL(blob);
-		link.download = document.getElementById("filename").value;
+		link.href = (window.URL || window.webkitURL).createObjectURL(blob);
+		link.download = document.getElementById('filename').value;
 		link.click();
 	} else {
 		alert("data undefined");

@@ -30,7 +30,7 @@
 // conflict with libjpeg typedef
 #define INT32 INT32_WIN
 #include <windows.h>
-static inline int64_t get_time_usec() {
+static int64_t get_time_usec() {
 	LARGE_INTEGER freq, perf;
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&perf);
@@ -40,7 +40,7 @@ static inline int64_t get_time_usec() {
 #else
 #include <time.h>
 #include <sys/time.h>
-static inline int64_t get_time_usec() {
+static int64_t get_time_usec() {
 	struct timeval time;
 	gettimeofday(&time, NULL);
 	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
@@ -180,7 +180,7 @@ static const char zigzag_refresh[DCTSIZE2] = {
 };
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, int stride, int32_t flags) {
-	int k, n = DCTSIZE, x, y, flag = 1;
+	int k, n = DCTSIZE, x, y, need_refresh = 1;
 	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifdef USE_JSIMD
 	JSAMPROW output_buf[DCTSIZE]; int output_col = 0;
@@ -310,9 +310,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 		int i = jpeg_natural_order[k];
 		float *tab = quantsmooth_tables[i], a2 = 0, a3 = 0;
 		int range = quantval[i] * 2;
-		if (flag && zigzag_refresh[i]) {
+		if (need_refresh && zigzag_refresh[i]) {
 			idct_islow(coef, buf, n);
-			flag = 0;
+			need_refresh = 0;
 #ifdef VINIT
 			for (y = 0; y < n; y++) {
 				border[y] = buf[y * n];
@@ -413,8 +413,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 #endif
 
 		a2 = a2 / a3;
+		range = roundf(a2);
 
-		{
+		if (range) {
 			int div = quantval[i], coef1 = coef[i], add;
 			int dh, dl, d0 = (div-1) >> 1, d1 = div >> 1;
 			// int a0 = (coef1 + (coef1 < 0 ? -div : div) / 2) / div * div;
@@ -423,16 +424,14 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 			a0 = ((a0 + (div >> 1)) / div) * div;
 			a0 = (a0 ^ sign) - sign;
 
-			dh = a0 < 0 ? d1 : d0;
-			dl = a0 > 0 ? -d1 : -d0;
+			dh = a0 + (a0 < 0 ? d1 : d0);
+			dl = a0 - (a0 > 0 ? d1 : d0);
 
-			add = coef1 - a0;
-			add -= roundf(a2);
+			add = coef1 - range;
 			if (add > dh) add = dh;
 			if (add < dl) add = dl;
-			add += a0;
-			flag += add != coef1;
 			coef[i] = add;
+			need_refresh |= add ^ coef1;
 		}
 	}
 }
@@ -559,7 +558,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 #ifdef WITH_LOG
 	if (flags & 8) {
 		time = get_time_usec() - time;
-		logfmt("quantsmooth = %.3fms\n", time * 0.001);
+		logfmt("quantsmooth: %.3fms\n", time * 0.001);
 	}
 #endif
 
