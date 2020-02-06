@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
 #endif
 
 	while (argc > 1) {
-		const char *arg1 = argv[1], *arg2 = argv[2], *arg = arg1; char c;
+		const char *arg1 = argv[1], *arg2 = argc > 2 ? argv[2] : NULL, *arg = arg1; char c;
 		if (arg[0] != '-' || !(c = arg[1])) break;
 		if (c != '-') switch (c) {
 			case 'o': arg = "--optimize"; c = 0; break;
