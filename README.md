@@ -13,6 +13,8 @@ Web version available [here](https://ilyakurdyukov.github.io/jpeg-quantsmooth/).
 Images are processed locally on your computer.
 Without multithreading and SIMD optimizations it runs slower than native code.
 
+- Click the "Load" button or drag-n-drop JPEG image into the browser window. After processing is complete, you can save the result by clicking the "Save" button. You can edit the *filename* field before saving. The *options* field is passed to the *wasm* code when you initiate a processing by loading a file.
+
 ## Usage
 
 `jpegqs [options] input.jpg output.jpg`
