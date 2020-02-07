@@ -34,8 +34,7 @@ static int64_t get_time_usec() {
 	LARGE_INTEGER freq, perf;
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&perf);
-	double d = (double)perf.QuadPart * 1000000.0 / (double)freq.QuadPart;
-	return d;
+	return perf.QuadPart * 1000000.0 / freq.QuadPart;
 }
 #else
 #include <time.h>
@@ -146,8 +145,8 @@ static void quantsmooth_init(int32_t flags) {
 
 		if (flags & JPEGQS_DIAGONALS) {
 			tab += nn * 2 + n * 4;
-			for (y = 0; y < 7; y++, tab += n * 2) {
-				for (x = 0; x < 7; x++) {
+			for (y = 0; y < n - 1; y++, tab += n * 2) {
+				for (x = 0; x < n - 1; x++) {
 					p = y * n + x;
 					tab[x] = temp[p] - temp[p + n + 1];
 					tab[x + n] = temp[p + 1] - temp[p + n];
@@ -477,10 +476,8 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		compptr = srcinfo->comp_info + ci;
-		stride = (srcinfo->max_h_samp_factor * DCTSIZE) / compptr->h_samp_factor;
-		comp_width = (srcinfo->image_width + stride - 1) / stride;
+		comp_width = compptr->width_in_blocks;
 		comp_height = compptr->height_in_blocks;
-
 		if (!(qtbl = compptr->quant_table)) continue;
 
 		// skip if already processed
@@ -502,9 +499,8 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 #define IMAGEPTR &image[(blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1]
 
 #ifdef USE_JSIMD
-		JSAMPROW output_buf[8] = {
-			image+stride*0, image+stride*1, image+stride*2, image+stride*3,
-			image+stride*4, image+stride*5, image+stride*6, image+stride*7 };
+		JSAMPROW output_buf[DCTSIZE];
+		for (i = 0; i < DCTSIZE; i++) output_buf[i] = image + i * stride;
 #endif
 
 		for (iter = 0; iter < num_iter; iter++) {

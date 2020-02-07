@@ -32,7 +32,7 @@ static const char jpeg_natural_order[DCTSIZE2] = {
 	53, 60, 61, 54, 47, 55, 62, 63
 };
 
-static JSAMPLE range_limit_static[11 * CENTERJSAMPLE];
+static JSAMPLE range_limit_static[CENTERJSAMPLE * 8];
 
 #ifndef USE_JSIMD
 
@@ -322,8 +322,8 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 	int32_t tmp0, tmp1, tmp2, tmp3;
 	int32_t tmp10, tmp11, tmp12, tmp13;
 	int32_t z1, z2, z3, z4, z5;
-	JCOEFPTR inptr;
-	JSAMPLE *range_limit = range_limit_static + (MAXJSAMPLE+1) + CENTERJSAMPLE;
+	JCOEFPTR inptr = coef_block;
+	JSAMPLE *range_limit = range_limit_static;
 	int ctr;
 	int32_t *wsptr, workspace[DCTSIZE2];	/* buffers data between passes */
 
@@ -335,11 +335,9 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 
 #define M1(i) inptr[DCTSIZE*i]
 #define M2(i, tmp) wsptr[DCTSIZE*i] = DESCALE(tmp, CONST_BITS-PASS1_BITS);
-	inptr = coef_block;
 	wsptr = workspace;
 	for (ctr = DCTSIZE; ctr > 0; ctr--, inptr++, wsptr++) {
-		if (!(inptr[DCTSIZE*1] | inptr[DCTSIZE*2] | inptr[DCTSIZE*3] | inptr[DCTSIZE*4] |
-				inptr[DCTSIZE*5] | inptr[DCTSIZE*6] | inptr[DCTSIZE*7])) {
+		if (!(M1(1) | M1(2) | M1(3) | M1(4) | M1(5) | M1(6) | M1(7))) {
 			/* AC terms all zero */
 			int dcval = SHL(M1(0), PASS1_BITS);
 			wsptr[DCTSIZE*0] = dcval;
@@ -363,7 +361,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr++, wsptr += DCTSIZE, outptr += stride) {
 #ifndef NO_ZERO_ROW_TEST
-		if (!(wsptr[1] | wsptr[2] | wsptr[3] | wsptr[4] | wsptr[5] | wsptr[6] | wsptr[7])) {
+		if (!(M1(1) | M1(2) | M1(3) | M1(4) | M1(5) | M1(6) | M1(7))) {
 			/* AC terms all zero */
 			JSAMPLE dcval = range_limit[DESCALE(wsptr[0], PASS1_BITS+3) & RANGE_MASK];
 			outptr[0] = dcval;
@@ -397,12 +395,10 @@ static void range_limit_init() {
 #ifdef NEED_RANGELIMIT
 	int i, c = CENTERJSAMPLE, m = c * 2;
 
-	for (i = 0; i < m; i++) t[i] = 0;
-	t += m;
-	for (i = 0; i < m; i++) t[i] = i;
-	for (; i < 2 * m + c; i++) t[i] = m - 1;
-	for (; i < 4 * m; i++) t[i] = 0;
-	for (i = 0; i < c; i++) t[4 * m + i] = i;
+	for (i = 0; i < c; i++) t[i] = i + c;
+	while (i < 2 * m) t[i++] = m - 1;
+	while (i < 3 * m + c) t[i++] = 0;
+	for (i = 0; i < c; i++) t[3 * m + c + i] = i;
 #else
 	(void)t;
 #endif
