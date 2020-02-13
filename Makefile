@@ -63,7 +63,10 @@ ALLSRC := $(patsubst $(JPEGSRC)/%.c,%,$(wildcard $(JPEGSRC)/*.c))
 SOURCES := jutils jmemmgr jmemnobs jcomapi jerror \
   jdapimin jdcoefct jdmarker jdhuff jdinput jdtrans \
   jcapimin jcmaster jcmarker jchuff jcparam jctrans \
-	rdswitch cdjpeg transupp jdatasrc jdatadst jidctint
+	rdswitch cdjpeg transupp jdatasrc jdatadst
+ifeq ($(SRCNAME),jpegqs-mini.c)
+SOURCES += jidctint jfdctint
+endif
 # version specific sources
 SOURCES += $(filter jdphuff jcphuff jaricom jdarith jcarith,$(ALLSRC))
 

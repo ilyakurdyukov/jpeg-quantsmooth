@@ -404,7 +404,7 @@ static void range_limit_init() {
 #endif
 }
 
-static void idct_fslow(JCOEFPTR in, float *out) {
+static void idct_fslow(float *in, float *out) {
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 	float *ws, buf[DCTSIZE2]; int i;
 #define M3(inc1, inc2) ws = buf; \
@@ -431,6 +431,48 @@ static void idct_fslow(JCOEFPTR in, float *out) {
 		M2(1, t5 + t2) M2(6, t5 - t2) \
 		M2(2, t6 + t1) M2(5, t6 - t1) \
 		M2(3, t7 + t0) M2(4, t7 - t0) \
+	}
+#define M1(i) in[DCTSIZE*i]
+#define M2(i, t) ws[DCTSIZE*i] = t;
+	M3(in++, ws++)
+#undef M1
+#undef M2
+#define M1(i) ws[i]
+#define M2(i, t) out[i] = (t) * 0.125f;
+	M3(ws += DCTSIZE, out += DCTSIZE)
+#undef M1
+#undef M2
+#undef M3
+}
+
+static void fdct_fslow(float *in, float *out) {
+	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+	float *ws, buf[DCTSIZE2]; int i;
+#define M3(inc1, inc2) ws = buf; \
+	for (i = 0; i < DCTSIZE; i++, inc1, inc2) { \
+		z1 = M1(0); z2 = M1(7); t0 = z1 + z2; t7 = z1 - z2; \
+		z1 = M1(1); z2 = M1(6); t1 = z1 + z2; t6 = z1 - z2; \
+		z1 = M1(2); z2 = M1(5); t2 = z1 + z2; t5 = z1 - z2; \
+		z1 = M1(3); z2 = M1(4); t3 = z1 + z2; t4 = z1 - z2; \
+		z1 = t0 + t3; z4 = t0 - t3; \
+		z2 = t1 + t2; z3 = t1 - t2; \
+		M2(0, z1 + z2); \
+		M2(4, z1 - z2); \
+		z1 = (z3 + z4) * 0.541196100f; \
+		M2(2, z1 + z4 * 0.765366865f); \
+		M2(6, z1 - z3 * 1.847759065f); \
+		z1 = t4 + t7; z2 = t5 + t6; \
+		z3 = t4 + t6; z4 = t5 + t7; \
+		z5 = (z3 + z4) * 1.175875602f; \
+		t4 *= 0.298631336f; t5 *= 2.053119869f; \
+		t6 *= 3.072711026f; t7 *= 1.501321110f; \
+		z1 *= 0.899976223f; z2 *= 2.562915447f; \
+		z3 = z3 * 1.961570560f - z5; \
+		z4 = z4 * 0.390180644f - z5; \
+		M2(7, t4 - z1 - z3); \
+		M2(5, t5 - z2 - z4); \
+		M2(3, t6 - z2 - z3); \
+		M2(1, t7 - z1 - z4); \
 	}
 #define M1(i) in[DCTSIZE*i]
 #define M2(i, t) ws[DCTSIZE*i] = t;

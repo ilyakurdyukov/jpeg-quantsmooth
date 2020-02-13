@@ -112,23 +112,26 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 enum {
 	JPEGQS_ITER_SHIFT = 16,
 	JPEGQS_ITER_MAX = 0xff,
+	JPEGQS_FLAGS_SHIFT = 8,
+	JPEGQS_FLAGS_MASK = 0xff,
 	JPEGQS_DIAGONALS = 1 << 8,
+	JPEGQS_JOINT_YUV = 2 << 8,
 	JPEGQS_INFO_MASK = 0xff
 };
 
 static float ALIGN(32) quantsmooth_tables[DCTSIZE2][DCTSIZE2 * 4 + DCTSIZE * (4 - 2)];
 
 static void quantsmooth_init(int32_t flags) {
-	int i; JCOEF coef[DCTSIZE2];
+	int i, n = DCTSIZE, nn = n * n, n2 = nn + n * 4;
 	float bcoef = flags & JPEGQS_DIAGONALS ? 4.0 : 2.0;
 
 	range_limit_init();
 
 	for (i = 0; i < DCTSIZE2; i++) {
 		float *tab = quantsmooth_tables[i], temp[DCTSIZE2];
-		int x, y, p, n = DCTSIZE, nn = n * n, n2 = nn + n * 4;
-		memset(coef, 0, sizeof(coef)); coef[i] = 1;
-		idct_fslow(coef, temp);
+		int x, y, p;
+		memset(temp, 0, sizeof(temp)); temp[i] = 1;
+		idct_fslow(temp, temp);
 
 #define M1(a, b, j) \
 	for (y = 0; y < n - 1 + a; y++) \
@@ -178,13 +181,57 @@ static const char zigzag_refresh[DCTSIZE2] = {
 	1, 0, 1, 0, 1, 0, 1, 1
 };
 
-static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, int stride, int32_t flags) {
+static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
+		JSAMPLE *image, JSAMPLE *image2, int stride, int32_t flags) {
 	int k, n = DCTSIZE, x, y, need_refresh = 1;
 	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifdef USE_JSIMD
 	JSAMPROW output_buf[DCTSIZE]; int output_col = 0;
 	for (k = 0; k < n; k++) output_buf[k] = buf + k * n;
 #endif
+
+	if (image2) {
+		float buf[DCTSIZE2];
+		for (y = 0; y < n; y++)
+		for (x = 0; x < n; x++) {
+			float sumA = 0, sumB = 0, sumAA = 0, sumBB = 0, sumAB = 0;
+			float divN = 1.0f / 16, scale, offset; int a;
+#define M1(x, y) { \
+	float a = image2[(y) * stride + x]; \
+	float b = image[(y) * stride + x]; \
+	sumA += a; sumAA += a * a; \
+	sumB += b; sumBB += b * b; sumAB += a * b; }
+#define M2 sumA += sumA; sumB += sumB; \
+	sumAA += sumAA; sumBB += sumBB; sumAB += sumAB;
+			M1(x, y) M2
+			M1(x, y-1) M1(x-1, y) M1(x+1, y) M1(x, y+1) M2
+			M1(x-1, y-1) M1(x+1, y-1) M1(x-1, y+1) M1(x+1, y+1)
+#undef M2
+#undef M1
+			scale = sumAA - sumA * divN * sumA;
+			if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
+			scale = scale > 4.0f ? 4.0f : scale;
+			offset = (sumB - scale * sumA) * divN;
+
+			a = image2[y * stride + x] * scale + offset + 0.5f;
+			a = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
+			buf[y * n + x] = a - CENTERJSAMPLE;
+		}
+		fdct_fslow(buf, buf);
+		for (x = 0; x < n * n; x++) {
+			int div = quantval[x], coef1 = coef[x], add;
+			int dh, dl, d0 = (div - 1) >> 1, d1 = div >> 1;
+			int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
+
+			dh = a0 + (a0 < 0 ? d1 : d0);
+			dl = a0 - (a0 > 0 ? d1 : d0);
+
+			add = roundf(buf[x]);
+			if (add > dh) add = dh;
+			if (add < dl) add = dl;
+			coef[x] = add;
+		}
+	}
 
 #if 1 && defined(USE_NEON)
 #define VINIT \
@@ -416,12 +463,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval, JSAMPROW image, i
 
 		if (range) {
 			int div = quantval[i], coef1 = coef[i], add;
-			int dh, dl, d0 = (div-1) >> 1, d1 = div >> 1;
-			// int a0 = (coef1 + (coef1 < 0 ? -div : div) / 2) / div * div;
-			int32_t a0 = coef1, sign = a0 >> 31;
-			a0 = (a0 ^ sign) - sign;
-			a0 = ((a0 + (div >> 1)) / div) * div;
-			a0 = (a0 ^ sign) - sign;
+			int dh, dl, d0 = (div - 1) >> 1, d1 = div >> 1;
+			int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
 
 			dh = a0 + (a0 < 0 ? d1 : d0);
 			dl = a0 - (a0 > 0 ? d1 : d0);
@@ -439,7 +482,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter;
 	jpeg_component_info *compptr;
-	JQUANT_TBL *qtbl; JSAMPROW image;
+	JQUANT_TBL *qtbl; JSAMPROW image, image2 = NULL;
 	int num_iter = (flags >> JPEGQS_ITER_SHIFT) & JPEGQS_ITER_MAX;
 
 #ifdef WITH_LOG
@@ -496,7 +539,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 #ifdef WITH_LOG
 		if (flags & 4) logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
-#define IMAGEPTR &image[(blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1]
+#define IMAGEPTR (blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1
 
 #ifdef USE_JSIMD
 		JSAMPROW output_buf[DCTSIZE];
@@ -517,9 +560,9 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 					if (!iter)
 						for (i = 0; i < DCTSIZE2; i++) coef[i] *= qtbl->quantval[i];
 #ifdef USE_JSIMD
-					int output_col = IMAGEPTR - image;
+					int output_col = IMAGEPTR;
 #endif
-					idct_islow(coef, IMAGEPTR, stride);
+					idct_islow(coef, image + IMAGEPTR, stride);
 				}
 			}
 
@@ -543,13 +586,82 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JCOEFPTR coef = buffer[0][blk_x];
-					quantsmooth_block(coef, qtbl->quantval, IMAGEPTR, stride, flags);
+					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR,
+							image2 ? image2 + IMAGEPTR : NULL, stride, flags);
 				}
 			}
 		} // iter
+
+		// make downscaled copy of Y component
+		if (flags & JPEGQS_JOINT_YUV &&
+				!ci && srcinfo->jpeg_color_space == JCS_YCbCr &&
+				!((compptr[1].h_samp_factor - 1) | (compptr[1].v_samp_factor - 1) |
+				(compptr[2].h_samp_factor - 1) | (compptr[2].v_samp_factor - 1))) {
+			int y, w, h, w1, h1, st, ws, hs;
+
+			ws = compptr[0].h_samp_factor;
+			hs = compptr[0].v_samp_factor;
+			w = compptr[1].width_in_blocks * DCTSIZE;
+			h = compptr[1].height_in_blocks * DCTSIZE;
+			st = w + 8;
+			image2 = (JSAMPLE*)malloc(((h + 2) * st + 8) * sizeof(JSAMPLE));
+			image2 += 7;
+
+			w1 = (comp_width * DCTSIZE + ws - 1) / ws;
+			h1 = (comp_height * DCTSIZE + hs - 1) / hs;
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
+				JDIMENSION blk_x;
+				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+
+				for (blk_x = 0; blk_x < comp_width; blk_x++) {
+					JCOEFPTR coef = buffer[0][blk_x];
+#ifdef USE_JSIMD
+					int output_col = IMAGEPTR;
+#endif
+					idct_islow(coef, image + IMAGEPTR, stride);
+				}
+			}
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+			for (y = 0; y < h1; y++) {
+				int x, h2 = comp_height * DCTSIZE - y * hs;
+				h2 = h2 < hs ? h2 : hs;
+				for (x = 0; x < w1; x++) {
+					JSAMPLE *p = image + (y * hs + 1) * stride + x * ws + 1;
+					int xx, yy, sum = 0, w2 = comp_width * DCTSIZE - x * ws, div; 
+					w2 = w2 < ws ? w2 : ws; div = w2 * h2;
+
+					for (yy = 0; yy < h2; yy++)
+					for (xx = 0; xx < w2; xx++) sum += p[yy * stride + xx];
+					image2[(y + 1) * st + x + 1] = (sum + div / 2) / div;
+				}
+			}
+
+			{
+				int x, y;
+				for (y = 1; y < h1 + 1; y++) {
+					JSAMPLE a = image2[y * st + w1];
+					image2[y * st] = image2[y * st + 1];
+					for (x = w1 + 1; x < w + 2; x++)
+						image2[y * st + x] = a;
+				}
+				memcpy(image2, image2 + st, st);
+				for (y = h1 + 1; y < h + 2; y++)
+					memcpy(image2 + y * st, image2 + h1 * st, st);
+			}
+		}
 #undef IMAGEPTR
 		free(image - 7);
 	}
+
+	if (image2) free(image2 - 7);
 
 #ifdef WITH_LOG
 	if (flags & 8) {

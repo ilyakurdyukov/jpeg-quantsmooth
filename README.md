@@ -21,8 +21,9 @@ Without multithreading and SIMD optimizations it runs slower than native code.
 
 ## Options
 
-`-q, --quality n` Quality setting (1-4, default is 3)  
+`-q, --quality n` Quality setting (1-5, default is 3)  
 `-n, --niter n` Number of iterations (default is 3)  
+`-t, --threads n` Set the number of CPU threads to use  
 `-o, --optimize` Option for libjpeg to produce smaller output file  
 `-v, --verbose n` Print libjpeg debug output  
 `-i, --info n` Print quantsmooth debug output: 0 - silent, 8 - processing time, 15 - all (default)  

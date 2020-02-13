@@ -40,6 +40,10 @@
 #include "jversion.h"
 #endif
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #ifdef WASM
 #define logfmt(...) printf(__VA_ARGS__)
 #else
@@ -180,9 +184,9 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, jpeg_verbose = 0;
+	int optimize = 0, jpeg_verbose = 0, threads = 0;
 	int cmd_info = 15, quality = 3, cmd_niter = -1;
-	int32_t jpegqs_flags;
+	int32_t jpegqs_flags = -1;
 #ifdef WASM
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
@@ -203,6 +207,8 @@ int main(int argc, char **argv) {
 			case 'i': arg = "--info"; break;
 			case 'n': arg = "--niter"; break;
 			case 'q': arg = "--quality"; break;
+			case 't': arg = "--threads"; break;
+			case 'f': arg = "--flags"; break;
 			default: c = '-';
 		}
 		if (c != '-' && arg1[2]) {
@@ -230,6 +236,14 @@ int main(int argc, char **argv) {
 			CHECKNUM
 			quality = atoi(arg2);
 			argv += 2; argc -= 2;
+		} else if (argc > 2 && !strcmp(arg, "--threads")) {
+			CHECKNUM
+			threads = atoi(arg2);
+			argv += 2; argc -= 2;
+		} else if (argc > 2 && !strcmp(arg, "--flags")) {
+			CHECKNUM
+			jpegqs_flags = atoi(arg2);
+			argv += 2; argc -= 2;
 		} else if (!strcmp(arg, "--")) {
 			argv++; argc--;
 			break;
@@ -237,16 +251,24 @@ int main(int argc, char **argv) {
 		else break;
 	}
 
+#ifdef _OPENMP
+	if (threads > 0) {
+		omp_set_num_threads(threads);
+	}
+#endif
+
 	{
 		int niter = 3, flags = 0;
 		if (quality <= 1) niter = 1;
 		else if (quality <= 2) niter = 2;
 		else if (quality >= 4) flags = JPEGQS_DIAGONALS;
+		if (quality >= 5) flags |= JPEGQS_JOINT_YUV;
 
 		niter = cmd_niter >= 0 ? cmd_niter : niter;
 		if (niter > JPEGQS_ITER_MAX) niter = JPEGQS_ITER_MAX;
 
-		jpegqs_flags = flags;
+		if (jpegqs_flags < 0) jpegqs_flags = flags;
+		else jpegqs_flags = (jpegqs_flags & JPEGQS_FLAGS_MASK) << JPEGQS_FLAGS_SHIFT;
 		jpegqs_flags |= cmd_info & JPEGQS_INFO_MASK;
 		jpegqs_flags |= niter << JPEGQS_ITER_SHIFT;
 	}
@@ -309,8 +331,9 @@ int main(int argc, char **argv) {
 "  %s [options] input.jpg output.jpg\n"
 "\n"
 "Options:\n"
-"  -q, --quality n   Quality setting (1-4, default is 3)\n"
+"  -q, --quality n   Quality setting (1-5, default is 3)\n"
 "  -n, --niter n     Number of iterations (default is 3)\n"
+"  -t, --threads n   Set the number of CPU threads to use\n"
 "  -o, --optimize    Option for libjpeg to produce smaller output file\n"
 "  -v, --verbose n   Print libjpeg debug output\n"
 "  -i, --info n      Print quantsmooth debug output:\n"
