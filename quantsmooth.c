@@ -263,6 +263,7 @@ int main(int argc, char **argv) {
 		else if (quality <= 2) niter = 2;
 		else if (quality >= 4) flags = JPEGQS_DIAGONALS;
 		if (quality >= 5) flags |= JPEGQS_JOINT_YUV;
+		if (quality >= 6) flags |= JPEGQS_UPSAMPLE_UV;
 
 		niter = cmd_niter >= 0 ? cmd_niter : niter;
 		if (niter > JPEGQS_ITER_MAX) niter = JPEGQS_ITER_MAX;
@@ -331,7 +332,7 @@ int main(int argc, char **argv) {
 "  %s [options] input.jpg output.jpg\n"
 "\n"
 "Options:\n"
-"  -q, --quality n   Quality setting (1-5, default is 3)\n"
+"  -q, --quality n   Quality setting (1-6, default is 3)\n"
 "  -n, --niter n     Number of iterations (default is 3)\n"
 "  -t, --threads n   Set the number of CPU threads to use\n"
 "  -o, --optimize    Option for libjpeg to produce smaller output file\n"

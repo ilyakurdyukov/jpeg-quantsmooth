@@ -25,6 +25,7 @@ jpegsrc.v%.tar.gz:
 	test -f $@
 jpeg-%/jutils.c: jpegsrc.v%.tar.gz
 	tar -xzf jpegsrc.v$(patsubst jpeg-%/jutils.c,%,$@).tar.gz
+	touch $@
 jpeg-%/Makefile: jpeg-%/jutils.c
 	cd $(patsubst %/Makefile,%,$@) && ./configure
 jpeg-%/libjpeg.a: jpeg-%/Makefile
@@ -36,6 +37,7 @@ libjpeg-turbo-%.tar.gz:
 	test -f $@
 libjpeg-turbo-%/jutils.c: libjpeg-turbo-%.tar.gz
 	tar -xzf $(patsubst %/jutils.c,%,$@).tar.gz
+	touch $@
 .PRECIOUS: libjpeg-turbo-%.tar.gz libjpeg-turbo-%/jutils.c
 libjpeg-turbo-1.%/Makefile: libjpeg-turbo-1.%/jutils.c
 	cd $(patsubst %/Makefile,%,$@) && ./configure

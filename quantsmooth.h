@@ -116,6 +116,7 @@ enum {
 	JPEGQS_FLAGS_MASK = 0xff,
 	JPEGQS_DIAGONALS = 1 << 8,
 	JPEGQS_JOINT_YUV = 2 << 8,
+	JPEGQS_UPSAMPLE_UV = 4 << 8,
 	JPEGQS_INFO_MASK = 0xff
 };
 
@@ -196,16 +197,16 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		for (x = 0; x < n; x++) {
 			float sumA = 0, sumB = 0, sumAA = 0, sumBB = 0, sumAB = 0;
 			float divN = 1.0f / 16, scale, offset; int a;
-#define M1(x, y) { \
-	float a = image2[(y) * stride + x]; \
-	float b = image[(y) * stride + x]; \
+#define M1(xx, yy) { \
+	float a = image2[(y + yy) * stride + x + xx]; \
+	float b = image[(y + yy) * stride + x + xx]; \
 	sumA += a; sumAA += a * a; \
 	sumB += b; sumBB += b * b; sumAB += a * b; }
 #define M2 sumA += sumA; sumB += sumB; \
 	sumAA += sumAA; sumBB += sumBB; sumAB += sumAB;
-			M1(x, y) M2
-			M1(x, y-1) M1(x-1, y) M1(x+1, y) M1(x, y+1) M2
-			M1(x-1, y-1) M1(x+1, y-1) M1(x-1, y+1) M1(x+1, y+1)
+			M1(0, 0) M2
+			M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
+			M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
 			scale = sumAA - sumA * divN * sumA;
@@ -480,9 +481,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 
 static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
 	JDIMENSION comp_width, comp_height, blk_y;
-	int i, ci, stride, iter;
+	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
 	jpeg_component_info *compptr;
-	JQUANT_TBL *qtbl; JSAMPROW image, image2 = NULL;
+	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
 	int num_iter = (flags >> JPEGQS_ITER_SHIFT) & JPEGQS_ITER_MAX;
 
 #ifdef WITH_LOG
@@ -517,7 +518,16 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 
 	quantsmooth_init(flags);
 
+	compptr = srcinfo->comp_info;
+	if (flags & (JPEGQS_JOINT_YUV | JPEGQS_UPSAMPLE_UV) &&
+			srcinfo->jpeg_color_space == JCS_YCbCr &&
+			!((compptr[1].h_samp_factor - 1) | (compptr[1].v_samp_factor - 1) |
+			(compptr[2].h_samp_factor - 1) | (compptr[2].v_samp_factor - 1))) {
+		need_downsample = 1;
+	}
+
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
+		int extra_refresh = 0;
 		compptr = srcinfo->comp_info + ci;
 		comp_width = compptr->width_in_blocks;
 		comp_height = compptr->height_in_blocks;
@@ -546,11 +556,13 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 		for (i = 0; i < DCTSIZE; i++) output_buf[i] = image + i * stride;
 #endif
 
-		for (iter = 0; iter < num_iter; iter++) {
+		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
+
+		for (iter = 0; iter < num_iter + extra_refresh; iter++) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
+			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
 						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
@@ -568,18 +580,20 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 
 			{
 				int y, w = comp_width * DCTSIZE, h = comp_height * DCTSIZE;
-				for (y = 1; y < h+1; y++) {
-					image[y*stride] = image[y*stride+1];
-					image[y*stride+w+1] = image[y*stride+w];
+				for (y = 1; y < h + 1; y++) {
+					image[y * stride] = image[y * stride + 1];
+					image[y * stride + w + 1] = image[y * stride + w];
 				}
-				memcpy(image, image + stride, stride);
-				memcpy(image + (h+1)*stride, image + h*stride, stride);
+				memcpy(image, image + stride, stride * sizeof(JSAMPLE));
+				memcpy(image + (h + 1) * stride, image + h * stride, stride * sizeof(JSAMPLE));
 			}
+
+			if (iter == num_iter) break;
 
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
+			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
 						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
@@ -592,40 +606,114 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 			}
 		} // iter
 
-		// make downscaled copy of Y component
-		if (flags & JPEGQS_JOINT_YUV &&
-				!ci && srcinfo->jpeg_color_space == JCS_YCbCr &&
-				!((compptr[1].h_samp_factor - 1) | (compptr[1].v_samp_factor - 1) |
-				(compptr[2].h_samp_factor - 1) | (compptr[2].v_samp_factor - 1))) {
-			int y, w, h, w1, h1, st, ws, hs;
-
+		if (image1) {
+			JSAMPLE *mem; int st, w1, h1, ws, hs;
+			compptr = srcinfo->comp_info;
 			ws = compptr[0].h_samp_factor;
 			hs = compptr[0].v_samp_factor;
-			w = compptr[1].width_in_blocks * DCTSIZE;
-			h = compptr[1].height_in_blocks * DCTSIZE;
-			st = w + 8;
-			image2 = (JSAMPLE*)malloc(((h + 2) * st + 8) * sizeof(JSAMPLE));
-			image2 += 7;
+			w1 = (srcinfo->image_width + ws - 1) / ws;
+			h1 = (srcinfo->image_height + hs - 1) / hs;
+			comp_width = compptr[0].width_in_blocks;
+			comp_height = compptr[0].height_in_blocks;
+			src_coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
+					((j_common_ptr)srcinfo, JPOOL_IMAGE, FALSE, comp_width, comp_height, 1);
+			(*srcinfo->mem->realize_virt_arrays) ((j_common_ptr)srcinfo);
 
-			w1 = (comp_width * DCTSIZE + ws - 1) / ws;
-			h1 = (comp_height * DCTSIZE + hs - 1) / hs;
+#ifdef _OPENMP
+			// need to suppress JERR_BAD_VIRTUAL_ACCESS
+			for (blk_y = 0; blk_y < comp_height; blk_y++) {
+				(*srcinfo->mem->access_virt_barray)
+						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+			}
+#endif
+
+			st = comp_width * DCTSIZE;
+			mem = (JSAMPLE*)malloc(comp_height * DCTSIZE * st * sizeof(JSAMPLE));
+			if (mem) {
+				int y, ww = comp_width * DCTSIZE, hh = comp_height * DCTSIZE;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+				for (y = 0; y < h1; y++) {
+					int x, xx, yy, a, h2 = hh - y * hs;
+					h2 = h2 < hs ? h2 : hs;
+					for (x = 0; x < w1; x++) {
+						JSAMPLE *p = mem + y * hs * st + x * ws;
+						JSAMPLE *p1 = image1 + (y * hs + 1) * stride1 + x * ws + 1;
+						int w2 = ww - x * ws; 
+						w2 = w2 < ws ? w2 : ws;
+
+						float sumA = 0, sumB = 0, sumAA = 0, sumBB = 0, sumAB = 0;
+						float divN = 1.0f / 16, scale, offset; int a;
+#define M1(xx, yy) { \
+	float a = image2[(y + yy + 1) * stride + x + xx + 1]; \
+	float b = image[(y + yy + 1) * stride + x + xx + 1]; \
+	sumA += a; sumAA += a * a; \
+	sumB += b; sumBB += b * b; sumAB += a * b; }
+#define M2(n) sumA *= n; sumB *= n; sumAA *= n; sumBB *= n; sumAB *= n;
+						M1(0, 0) M2(2)
+						M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2(2)
+						M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
+#undef M2
+#undef M1
+						scale = sumAA - sumA * divN * sumA;
+						if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
+						scale = scale > 4.0f ? 4.0f : scale;
+						// offset = (sumB - scale * sumA) * divN;
+						a = image2[(y + 1) * stride + x + 1];
+						offset = image[(y + 1) * stride + x + 1] - a * scale;
+
+						for (yy = 0; yy < h2; yy++)
+						for (xx = 0; xx < w2; xx++) {
+							a = p1[yy * stride1 + xx] * scale + offset + 0.5f;
+							p[yy * st + xx] = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
+						}
+					}
+					a = mem[y * st + w1 * ws - 1];
+					for (x = w1 * ws; x < ww; x++) mem[y * st + x] = a;
+				}
+				for (y = h1 * hs; y < hh; y++)
+					memcpy(mem + y * st, mem + (h1 * hs - 1) * st, st * sizeof(JSAMPLE));
 
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (blk_y = 0; blk_y < comp_height; blk_y += 1) {
-				JDIMENSION blk_x;
-				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+				for (blk_y = 0; blk_y < comp_height; blk_y++) {
+					JDIMENSION blk_x;
+					JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+							((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
 
-				for (blk_x = 0; blk_x < comp_width; blk_x++) {
-					JCOEFPTR coef = buffer[0][blk_x];
-#ifdef USE_JSIMD
-					int output_col = IMAGEPTR;
-#endif
-					idct_islow(coef, image + IMAGEPTR, stride);
+					for (blk_x = 0; blk_x < comp_width; blk_x++) {
+						float buf[DCTSIZE2]; int x, y, n = DCTSIZE;
+						JSAMPLE *p = mem + blk_y * n * st + blk_x * n;
+						JCOEFPTR coef = buffer[0][blk_x];
+						for (y = 0; y < n; y++)
+						for (x = 0; x < n; x++)
+							buf[y * n + x] = p[y * st + x] - CENTERJSAMPLE;
+						fdct_fslow(buf, buf);
+						for (x = 0; x < n * n; x++) coef[x] = roundf(buf[x]);
+					}
 				}
+				free(mem);
 			}
+		} else if (!ci && need_downsample) do {
+			// make downsampled copy of Y component
+			int y, w, h, w1, h1, st, ws, hs;
+
+			ws = compptr[0].h_samp_factor;
+			hs = compptr[0].v_samp_factor;
+			if ((ws - 1) | (hs - 1)) {
+				if (flags & JPEGQS_UPSAMPLE_UV) { image1 = image; stride1 = stride; }
+			} else { image2 = image; break; }
+			w = compptr[1].width_in_blocks * DCTSIZE;
+			h = compptr[1].height_in_blocks * DCTSIZE;
+			st = w + 8;
+			image2 = (JSAMPLE*)malloc(((h + 2) * st + 8) * sizeof(JSAMPLE));
+			if (!image2) break;
+			image2 += 7;
+
+			w1 = (comp_width * DCTSIZE + ws - 1) / ws;
+			h1 = (comp_height * DCTSIZE + hs - 1) / hs;
 
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -644,24 +732,29 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 				}
 			}
 
-			{
-				int x, y;
-				for (y = 1; y < h1 + 1; y++) {
-					JSAMPLE a = image2[y * st + w1];
-					image2[y * st] = image2[y * st + 1];
-					for (x = w1 + 1; x < w + 2; x++)
-						image2[y * st + x] = a;
-				}
-				memcpy(image2, image2 + st, st);
-				for (y = h1 + 1; y < h + 2; y++)
-					memcpy(image2 + y * st, image2 + h1 * st, st);
+			for (y = 1; y < h1 + 1; y++) {
+				int x; JSAMPLE a = image2[y * st + w1];
+				image2[y * st] = image2[y * st + 1];
+				for (x = w1 + 1; x < w + 2; x++)
+					image2[y * st + x] = a;
 			}
-		}
+			memcpy(image2, image2 + st, st * sizeof(JSAMPLE));
+			for (y = h1 + 1; y < h + 2; y++)
+				memcpy(image2 + y * st, image2 + h1 * st, st * sizeof(JSAMPLE));
+
+		} while (0);
 #undef IMAGEPTR
-		free(image - 7);
+		if (image != image1 && image != image2) free(image - 7);
 	}
 
-	if (image2) free(image2 - 7);
+	if (image2 != image1) free(image2 - 7);
+	if (image1) {
+		srcinfo->max_h_samp_factor = 1;
+		srcinfo->max_v_samp_factor = 1;
+		srcinfo->comp_info[0].h_samp_factor = 1;
+		srcinfo->comp_info[0].v_samp_factor = 1;
+		free(image1 - 7);
+	}
 
 #ifdef WITH_LOG
 	if (flags & 8) {

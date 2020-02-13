@@ -456,8 +456,7 @@ static void fdct_fslow(float *in, float *out) {
 		z1 = M1(3); z2 = M1(4); t3 = z1 + z2; t4 = z1 - z2; \
 		z1 = t0 + t3; z4 = t0 - t3; \
 		z2 = t1 + t2; z3 = t1 - t2; \
-		M2(0, z1 + z2); \
-		M2(4, z1 - z2); \
+		M2(0, z1 + z2); M2(4, z1 - z2); \
 		z1 = (z3 + z4) * 0.541196100f; \
 		M2(2, z1 + z4 * 0.765366865f); \
 		M2(6, z1 - z3 * 1.847759065f); \
@@ -469,10 +468,8 @@ static void fdct_fslow(float *in, float *out) {
 		z1 *= 0.899976223f; z2 *= 2.562915447f; \
 		z3 = z3 * 1.961570560f - z5; \
 		z4 = z4 * 0.390180644f - z5; \
-		M2(7, t4 - z1 - z3); \
-		M2(5, t5 - z2 - z4); \
-		M2(3, t6 - z2 - z3); \
-		M2(1, t7 - z1 - z4); \
+		M2(7, t4 - z1 - z3); M2(5, t5 - z2 - z4); \
+		M2(3, t6 - z2 - z3); M2(1, t7 - z1 - z4); \
 	}
 #define M1(i) in[DCTSIZE*i]
 #define M2(i, t) ws[DCTSIZE*i] = t;
