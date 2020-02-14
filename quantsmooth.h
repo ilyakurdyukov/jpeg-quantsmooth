@@ -190,20 +190,70 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	JSAMPROW output_buf[DCTSIZE]; int output_col = 0;
 	for (k = 0; k < n; k++) output_buf[k] = buf + k * n;
 #endif
+	(void)x;
 
 	if (image2) {
 		float buf[DCTSIZE2];
+#if 1 && defined(USE_AVX2)
+		for (y = 0; y < n; y++) {
+			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
+			__m256 v5, scale, offset;
+#define M1(x0, y0, x1, y1) \
+	v0 = _mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1]); \
+	v2 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
+	v0 = _mm_loadl_epi64((void*)&image[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((void*)&image[(y + y1) * stride + x1]); \
+	v3 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
+	sumA = _mm256_add_epi16(sumA, v2); \
+	sumB = _mm256_add_epi16(sumB, v3); \
+	sumAA = _mm256_add_epi32(sumAA, _mm256_madd_epi16(v2, v2)); \
+	sumAB = _mm256_add_epi32(sumAB, _mm256_madd_epi16(v2, v3));
+			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
+			v1 = _mm_loadl_epi64((void*)&image[y * stride]);
+			sumA = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v0));
+			sumB = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v1, v1));
+			sumAA = _mm256_madd_epi16(sumA, sumA);
+			sumAB = _mm256_madd_epi16(sumA, sumB);
+			M1(0, -1, -1, 0) M1(1, 0, 0, 1)
+			sumA = _mm256_add_epi16(sumA, sumA); sumAA = _mm256_add_epi32(sumAA, sumAA);
+			sumB = _mm256_add_epi16(sumB, sumB); sumAB = _mm256_add_epi32(sumAB, sumAB);
+			M1(-1, -1, 1, -1) M1(-1, 1, 1, 1)
+#undef M1
+			v3 = _mm256_set1_epi16(1);
+			v2 = _mm256_madd_epi16(sumA, v3); sumAA = _mm256_slli_epi32(sumAA, 4);
+			v3 = _mm256_madd_epi16(sumB, v3); sumAB = _mm256_slli_epi32(sumAB, 4);
+			sumAA = _mm256_sub_epi32(sumAA, _mm256_mullo_epi32(v2, v2));
+			sumAB = _mm256_sub_epi32(sumAB, _mm256_mullo_epi32(v2, v3));
+			v4 = _mm256_cmpeq_epi32(sumAA, _mm256_setzero_si256());
+			sumAB = _mm256_andnot_si256(v4, sumAB);
+			scale = _mm256_cvtepi32_ps(_mm256_or_si256(sumAA, v4));
+			scale = _mm256_div_ps(_mm256_cvtepi32_ps(sumAB), scale);
+			scale = _mm256_max_ps(scale, _mm256_set1_ps(-16.0f));
+			scale = _mm256_min_ps(scale, _mm256_set1_ps(16.0f));
+			v5 = _mm256_mul_ps(_mm256_cvtepi32_ps(v2), scale);
+			offset = _mm256_sub_ps(_mm256_cvtepi32_ps(v3), v5);
+			offset = _mm256_mul_ps(offset, _mm256_set1_ps(1.0f / 16));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
+			v5 = _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(v0));
+			v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), offset);
+			v5 = _mm256_max_ps(v5, _mm256_setzero_ps());
+			v5 = _mm256_min_ps(v5, _mm256_set1_ps(MAXJSAMPLE));
+			v5 = _mm256_sub_ps(v5, _mm256_set1_ps(CENTERJSAMPLE));
+			_mm256_store_ps(buf + y * n, v5);
+		}
+#else
 		for (y = 0; y < n; y++)
 		for (x = 0; x < n; x++) {
-			float sumA = 0, sumB = 0, sumAA = 0, sumBB = 0, sumAB = 0;
-			float divN = 1.0f / 16, scale, offset; int a;
+			float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
+			float divN = 1.0f / 16, scale, offset; float a;
 #define M1(xx, yy) { \
 	float a = image2[(y + yy) * stride + x + xx]; \
 	float b = image[(y + yy) * stride + x + xx]; \
 	sumA += a; sumAA += a * a; \
-	sumB += b; sumBB += b * b; sumAB += a * b; }
+	sumB += b; sumAB += a * b; }
 #define M2 sumA += sumA; sumB += sumB; \
-	sumAA += sumAA; sumBB += sumBB; sumAB += sumAB;
+	sumAA += sumAA; sumAB += sumAB;
 			M1(0, 0) M2
 			M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
 			M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
@@ -215,10 +265,11 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			scale = scale > 16.0f ? 16.0f : scale;
 			offset = (sumB - scale * sumA) * divN;
 
-			a = image2[y * stride + x] * scale + offset + 0.5f;
+			a = image2[y * stride + x] * scale + offset;
 			a = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
 			buf[y * n + x] = a - CENTERJSAMPLE;
 		}
+#endif
 		fdct_fslow(buf, buf);
 		for (x = 0; x < n * n; x++) {
 			int div = quantval[x], coef1 = coef[x], add;
@@ -353,7 +404,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		border[y + n * 5] = image[y * stride + n];
 	}
 
-	(void)x;
 	for (k = n * n - 1; k > 0; k--) {
 		int i = jpeg_natural_order[k];
 		float *tab = quantsmooth_tables[i], a2 = 0, a3 = 0;
@@ -644,15 +694,15 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 						int w2 = ww - x * ws; 
 						w2 = w2 < ws ? w2 : ws;
 
-						float sumA = 0, sumB = 0, sumAA = 0, sumBB = 0, sumAB = 0;
+						float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
 						float divN = 1.0f / 16, scale, offset; int a;
 #define M1(xx, yy) { \
 	float a = image2[(y + yy + 1) * stride + x + xx + 1]; \
 	float b = image[(y + yy + 1) * stride + x + xx + 1]; \
 	sumA += a; sumAA += a * a; \
-	sumB += b; sumBB += b * b; sumAB += a * b; }
+	sumB += b; sumAB += a * b; }
 #define M2 sumA += sumA; sumB += sumB; \
-	sumAA += sumAA; sumBB += sumBB; sumAB += sumAB;
+	sumAA += sumAA; sumAB += sumAB;
 						M1(0, 0) M2
 						M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
 						M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
