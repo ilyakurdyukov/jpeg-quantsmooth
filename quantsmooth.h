@@ -211,7 +211,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #undef M1
 			scale = sumAA - sumA * divN * sumA;
 			if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
-			scale = scale > 4.0f ? 4.0f : scale;
+			scale = scale < -16.0f ? -16.0f : scale;
+			scale = scale > 16.0f ? 16.0f : scale;
 			offset = (sumB - scale * sumA) * divN;
 
 			a = image2[y * stride + x] * scale + offset + 0.5f;
@@ -599,9 +600,9 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
 
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
+					JSAMPLE *p2 = image2 && flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
 					JCOEFPTR coef = buffer[0][blk_x];
-					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR,
-							image2 ? image2 + IMAGEPTR : NULL, stride, flags);
+					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, flags);
 				}
 			}
 		} // iter
@@ -650,15 +651,17 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 	float b = image[(y + yy + 1) * stride + x + xx + 1]; \
 	sumA += a; sumAA += a * a; \
 	sumB += b; sumBB += b * b; sumAB += a * b; }
-#define M2(n) sumA *= n; sumB *= n; sumAA *= n; sumBB *= n; sumAB *= n;
-						M1(0, 0) M2(2)
-						M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2(2)
+#define M2 sumA += sumA; sumB += sumB; \
+	sumAA += sumAA; sumBB += sumBB; sumAB += sumAB;
+						M1(0, 0) M2
+						M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
 						M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
 						scale = sumAA - sumA * divN * sumA;
 						if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
-						scale = scale > 4.0f ? 4.0f : scale;
+						scale = scale < -16.0f ? -16.0f : scale;
+						scale = scale > 16.0f ? 16.0f : scale;
 						// offset = (sumB - scale * sumA) * divN;
 						a = image2[(y + 1) * stride + x + 1];
 						offset = image[(y + 1) * stride + x + 1] - a * scale;
@@ -747,7 +750,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 		if (image != image1 && image != image2) free(image - 7);
 	}
 
-	if (image2 != image1) free(image2 - 7);
+	if (image2 != image1 && image2) free(image2 - 7);
 	if (image1) {
 		srcinfo->max_h_samp_factor = 1;
 		srcinfo->max_v_samp_factor = 1;
