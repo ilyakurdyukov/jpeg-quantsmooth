@@ -106,16 +106,16 @@ bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
 
 			if (control & JPEGQS_UPSAMPLE_UV) {
 #ifdef LIBJPEG_TURBO_VERSION
-        ci.master->last_MCU_col[1] = ci.master->last_MCU_col[0];
-        ci.master->last_MCU_col[2] = ci.master->last_MCU_col[0];
+				ci.master->last_MCU_col[1] = ci.master->last_MCU_col[0];
+				ci.master->last_MCU_col[2] = ci.master->last_MCU_col[0];
 #endif
 				jinit_color_deconverter(&ci);
 				jinit_upsampler(&ci);
-		    jinit_d_main_controller(&ci, FALSE);
+				jinit_d_main_controller(&ci, FALSE);
 				ci.input_iMCU_row = (ci.output_height + DCTSIZE - 1) / DCTSIZE;
 			}
 
-		  jinit_inverse_dct(&ci);
+			jinit_inverse_dct(&ci);
 			jpeg_start_output(&ci, ci.input_scan_number);
 		}
 
@@ -160,17 +160,14 @@ err:
 }
 
 int main(int argc, char **argv) {
-	bitmap_t *bm;
-	const char *ifn, *ofn;
-	int32_t control = 0;
-	int niter = 3;
+	bitmap_t *bm; const char *ifn, *ofn;
+	int32_t control = 0; int niter = 3;
 
 	if (argc != 3) {
 		printf("Usage: example input.jpg output.bmp\n");
 		return 1;
 	}
 
-	control = 0;
 	control |= JPEGQS_DIAGONALS; /* -q4 */
 	control |= JPEGQS_JOINT_YUV; /* -q5 */
 	control |= JPEGQS_UPSAMPLE_UV; /* -q6 */
