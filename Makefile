@@ -2,6 +2,9 @@
 SRCNAME ?= quantsmooth.c
 ifeq ($(SRCNAME),jpegqs-mini.c)
 APPNAME ?= jpegqs-mini
+else ifeq ($(SRCNAME),example.c)
+APPNAME ?= example
+$(APPNAME): quantsmooth.h idct.h
 else
 APPNAME ?= jpegqs
 $(APPNAME): quantsmooth.h idct.h
@@ -68,6 +71,10 @@ SOURCES := jutils jmemmgr jmemnobs jcomapi jerror \
 	rdswitch cdjpeg transupp jdatasrc jdatadst
 ifeq ($(SRCNAME),jpegqs-mini.c)
 SOURCES += jidctint jfdctint
+else ifeq ($(SRCNAME),example.c)
+SOURCES += jidctint jidctfst jidctflt jquant1 jquant2 \
+	jdapistd jdmaster jdcolor jdpostct jddctmgr jdsample jdmerge jdmainct
+SOURCES += $(filter jidctred,$(ALLSRC))
 endif
 # version specific sources
 SOURCES += $(filter jdphuff jcphuff jaricom jdarith jcarith,$(ALLSRC))

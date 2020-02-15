@@ -21,7 +21,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-static const char jpeg_natural_order[DCTSIZE2] = {
+static const char jpegqs_natural_order[DCTSIZE2] = {
 	 0,  1,  8, 16,  9,  2,  3, 10,
 	17, 24, 32, 25, 18, 11,  4,  5,
 	12, 19, 26, 33, 40, 48, 41, 34,
@@ -404,7 +404,7 @@ static void range_limit_init() {
 #endif
 }
 
-static void idct_fslow(float *in, float *out) {
+static void idct_float(float *in, float *out) {
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 	float *ws, buf[DCTSIZE2]; int i;
 #define M3(inc1, inc2) ws = buf; \
@@ -445,7 +445,7 @@ static void idct_fslow(float *in, float *out) {
 #undef M3
 }
 
-static void fdct_fslow(float *in, float *out) {
+static void fdct_float(float *in, float *out) {
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 	float *ws, buf[DCTSIZE2]; int i;
 #define M3(inc1, inc2) ws = buf; \

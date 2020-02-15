@@ -132,7 +132,7 @@ static void quantsmooth_init(int32_t flags) {
 		float *tab = quantsmooth_tables[i], temp[DCTSIZE2];
 		int x, y, p;
 		memset(temp, 0, sizeof(temp)); temp[i] = 1;
-		idct_fslow(temp, temp);
+		idct_float(temp, temp);
 
 #define M1(a, b, j) \
 	for (y = 0; y < n - 1 + a; y++) \
@@ -270,7 +270,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			buf[y * n + x] = a - CENTERJSAMPLE;
 		}
 #endif
-		fdct_fslow(buf, buf);
+		fdct_float(buf, buf);
 		for (x = 0; x < n * n; x++) {
 			int div = quantval[x], coef1 = coef[x], add;
 			int dh, dl, d0 = (div - 1) >> 1, d1 = div >> 1;
@@ -405,7 +405,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	}
 
 	for (k = n * n - 1; k > 0; k--) {
-		int i = jpeg_natural_order[k];
+		int i = jpegqs_natural_order[k];
 		float *tab = quantsmooth_tables[i], a2 = 0, a3 = 0;
 		int range = quantval[i] * 2;
 		if (need_refresh && zigzag_refresh[i]) {
@@ -542,7 +542,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 
 	if (flags & 1)
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
-		jpeg_component_info *compptr = srcinfo->comp_info + ci;
+		compptr = srcinfo->comp_info + ci;
 		i = compptr->quant_tbl_no;
 		logfmt("component[%i] : table %i, samp %ix%i\n", ci, i,
 				compptr->h_samp_factor, compptr->v_samp_factor);
@@ -666,6 +666,9 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 			h1 = (srcinfo->image_height + hs - 1) / hs;
 			comp_width = compptr[0].width_in_blocks;
 			comp_height = compptr[0].height_in_blocks;
+			compptr[ci].width_in_blocks = comp_width;
+			compptr[ci].height_in_blocks = comp_height;
+
 			src_coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
 					((j_common_ptr)srcinfo, JPOOL_IMAGE, FALSE, comp_width, comp_height, 1);
 			(*srcinfo->mem->realize_virt_arrays) ((j_common_ptr)srcinfo);
@@ -743,7 +746,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 						for (y = 0; y < n; y++)
 						for (x = 0; x < n; x++)
 							buf[y * n + x] = p[y * st + x] - CENTERJSAMPLE;
-						fdct_fslow(buf, buf);
+						fdct_float(buf, buf);
 						for (x = 0; x < n * n; x++) coef[x] = roundf(buf[x]);
 					}
 				}
