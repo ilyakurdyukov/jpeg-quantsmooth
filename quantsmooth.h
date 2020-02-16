@@ -880,5 +880,20 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 		qtbl = srcinfo->comp_info[ci].quant_table;
 		if (qtbl) for (i = 0; i < DCTSIZE2; i++) qtbl->quantval[i] = 1;
 	}
+
+#ifdef JPEGQS_READER
+	// things needed for jpeg_read_scanlines() to work correctly
+	if (image1) {
+#ifdef LIBJPEG_TURBO_VERSION
+		srcinfo->master->last_MCU_col[1] = srcinfo->master->last_MCU_col[0];
+		srcinfo->master->last_MCU_col[2] = srcinfo->master->last_MCU_col[0];
+#endif
+		jinit_color_deconverter(srcinfo);
+		jinit_upsampler(srcinfo);
+		jinit_d_main_controller(srcinfo, FALSE);
+		srcinfo->input_iMCU_row = (srcinfo->output_height + DCTSIZE - 1) / DCTSIZE;
+	}
+	jinit_inverse_dct(srcinfo);
+#endif
 }
 

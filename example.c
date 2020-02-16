@@ -35,6 +35,7 @@
 #include <omp.h>
 #endif
 
+#define JPEGQS_READER
 #include "quantsmooth.h"
 
 typedef struct {
@@ -91,31 +92,14 @@ bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
 		jpeg_stdio_src(&ci, fp);
 		jpeg_read_header(&ci, TRUE);
 		ci.out_color_space = JCS_RGB;
-		if (control & JPEGQS_UPSAMPLE_UV)
-			ci.do_fancy_upsampling = FALSE;
 		if (run_quantsmooth) ci.buffered_image = TRUE;
 		jpeg_start_decompress(&ci);
 		if (run_quantsmooth) {
-			jvirt_barray_ptr *src_coef_arrays;
 			while (!jpeg_input_complete(&ci)) {
 				jpeg_start_output(&ci, ci.input_scan_number);
 				jpeg_finish_output(&ci);
 			}
-			src_coef_arrays = jpeg_read_coefficients(&ci);
-			do_quantsmooth(&ci, src_coef_arrays, control);
-
-			if (control & JPEGQS_UPSAMPLE_UV) {
-#ifdef LIBJPEG_TURBO_VERSION
-				ci.master->last_MCU_col[1] = ci.master->last_MCU_col[0];
-				ci.master->last_MCU_col[2] = ci.master->last_MCU_col[0];
-#endif
-				jinit_color_deconverter(&ci);
-				jinit_upsampler(&ci);
-				jinit_d_main_controller(&ci, FALSE);
-				ci.input_iMCU_row = (ci.output_height + DCTSIZE - 1) / DCTSIZE;
-			}
-
-			jinit_inverse_dct(&ci);
+			do_quantsmooth(&ci, jpeg_read_coefficients(&ci), control);
 			jpeg_start_output(&ci, ci.input_scan_number);
 		}
 
