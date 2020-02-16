@@ -446,41 +446,103 @@ static void idct_float(float *in, float *out) {
 }
 
 static void fdct_float(float *in, float *out) {
-	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define M3 \
+	z1 = M1(0); z2 = M1(7); t0 = ADD(z1, z2); t7 = SUB(z1, z2); \
+	z1 = M1(1); z2 = M1(6); t1 = ADD(z1, z2); t6 = SUB(z1, z2); \
+	z1 = M1(2); z2 = M1(5); t2 = ADD(z1, z2); t5 = SUB(z1, z2); \
+	z1 = M1(3); z2 = M1(4); t3 = ADD(z1, z2); t4 = SUB(z1, z2); \
+	z1 = ADD(t0, t3); z4 = SUB(t0, t3); \
+	z2 = ADD(t1, t2); z3 = SUB(t1, t2); \
+	M2(0, ADD(z1, z2)) M2(4, SUB(z1, z2)) \
+	z1 = MUL((ADD(z3, z4)), SET1(0.541196100f)); \
+	M2(2, ADD(z1, MUL(z4, SET1(0.765366865f)))) \
+	M2(6, SUB(z1, MUL(z3, SET1(1.847759065f)))) \
+	z1 = ADD(t4, t7); z2 = ADD(t5, t6); \
+	z3 = ADD(t4, t6); z4 = ADD(t5, t7); \
+	z5 = MUL(ADD(z3, z4), SET1(1.175875602f)); \
+	t4 = MUL(t4, SET1(0.298631336f)); t5 = MUL(t5, SET1(2.053119869f)); \
+	t6 = MUL(t6, SET1(3.072711026f)); t7 = MUL(t7, SET1(1.501321110f)); \
+	z1 = MUL(z1, SET1(0.899976223f)); z2 = MUL(z2, SET1(2.562915447f)); \
+	z3 = SUB(MUL(z3, SET1(1.961570560f)), z5); \
+	z4 = SUB(MUL(z4, SET1(0.390180644f)), z5); \
+	M2(7, SUB(t4, ADD(z1, z3))) M2(5, SUB(t5, ADD(z2, z4))) \
+	M2(3, SUB(t6, ADD(z2, z3))) M2(1, SUB(t7, ADD(z1, z4)))
+
+#if 1 && defined(USE_AVX2)
+	__m256 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m256 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD _mm256_add_ps
+#define SUB _mm256_sub_ps
+#define MUL _mm256_mul_ps
+#define SET1 _mm256_set1_ps
+
+#define M1(i) _mm256_loadu_ps(in + i * DCTSIZE)
+#define M2(i, t) x##i = t;
+	M3
+#undef M1
+#undef M2
+
+#define M5(v0, v1, v2, v3, k) \
+v0 = _mm256_permute2f128_ps(x0, x4, k); \
+v1 = _mm256_permute2f128_ps(x1, x5, k); \
+v2 = _mm256_permute2f128_ps(x2, x6, k); \
+v3 = _mm256_permute2f128_ps(x3, x7, k);
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = _mm256_unpacklo_ps(v0, v2); \
+t1 = _mm256_unpacklo_ps(v1, v3); \
+x0 = _mm256_unpacklo_ps(t0, t1); \
+x1 = _mm256_unpackhi_ps(t0, t1); \
+t0 = _mm256_unpackhi_ps(v0, v2); \
+t1 = _mm256_unpackhi_ps(v1, v3); \
+x2 = _mm256_unpacklo_ps(t0, t1); \
+x3 = _mm256_unpackhi_ps(t0, t1);
+	M5(v0, v1, v2, v3, 0x20)
+	M5(v4, v5, v6, v7, 0x31)
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#define M1(i) x##i
+#define M2(i, t) x##i = MUL(t, SET1(0.125f));
+	M3
+#undef M1
+#undef M2
+	M5(v0, v1, v2, v3, 0x20)
+	M5(v4, v5, v6, v7, 0x31)
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M5
+#undef M4
+
+#define M1(i) _mm256_storeu_ps(out + i * DCTSIZE, x##i);
+	M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+#else
 	float *ws, buf[DCTSIZE2]; int i;
-#define M3(inc1, inc2) ws = buf; \
-	for (i = 0; i < DCTSIZE; i++, inc1, inc2) { \
-		z1 = M1(0); z2 = M1(7); t0 = z1 + z2; t7 = z1 - z2; \
-		z1 = M1(1); z2 = M1(6); t1 = z1 + z2; t6 = z1 - z2; \
-		z1 = M1(2); z2 = M1(5); t2 = z1 + z2; t5 = z1 - z2; \
-		z1 = M1(3); z2 = M1(4); t3 = z1 + z2; t4 = z1 - z2; \
-		z1 = t0 + t3; z4 = t0 - t3; \
-		z2 = t1 + t2; z3 = t1 - t2; \
-		M2(0, z1 + z2); M2(4, z1 - z2); \
-		z1 = (z3 + z4) * 0.541196100f; \
-		M2(2, z1 + z4 * 0.765366865f); \
-		M2(6, z1 - z3 * 1.847759065f); \
-		z1 = t4 + t7; z2 = t5 + t6; \
-		z3 = t4 + t6; z4 = t5 + t7; \
-		z5 = (z3 + z4) * 1.175875602f; \
-		t4 *= 0.298631336f; t5 *= 2.053119869f; \
-		t6 *= 3.072711026f; t7 *= 1.501321110f; \
-		z1 *= 0.899976223f; z2 *= 2.562915447f; \
-		z3 = z3 * 1.961570560f - z5; \
-		z4 = z4 * 0.390180644f - z5; \
-		M2(7, t4 - z1 - z3); M2(5, t5 - z2 - z4); \
-		M2(3, t6 - z2 - z3); M2(1, t7 - z1 - z4); \
-	}
-#define M1(i) in[DCTSIZE*i]
-#define M2(i, t) ws[DCTSIZE*i] = t;
-	M3(in++, ws++)
+	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD(a, b) ((a) + (b))
+#define SUB(a, b) ((a) - (b))
+#define MUL(a, b) ((a) * (b))
+#define SET1(a) (a)
+
+#define M1(i) in[i * DCTSIZE]
+#define M2(i, t) ws[i * DCTSIZE] = t;
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i++, in++, ws++) { M3 }
 #undef M1
 #undef M2
 #define M1(i) ws[i]
 #define M2(i, t) out[i] = (t) * 0.125f;
-	M3(ws += DCTSIZE, out += DCTSIZE)
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i++, ws += DCTSIZE, out += DCTSIZE) { M3 }
 #undef M1
 #undef M2
+#endif
 #undef M3
+#undef ADD
+#undef SUB
+#undef MUL
+#undef SET1
 }
 
