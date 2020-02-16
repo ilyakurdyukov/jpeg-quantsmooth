@@ -193,7 +193,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	(void)x;
 
 	if (image2) {
-		float buf[DCTSIZE2];
+		float ALIGN(32) buf[DCTSIZE2];
 #if 1 && defined(USE_AVX2)
 		for (y = 0; y < n; y++) {
 			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
@@ -240,7 +240,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			v5 = _mm256_max_ps(v5, _mm256_setzero_ps());
 			v5 = _mm256_min_ps(v5, _mm256_set1_ps(MAXJSAMPLE));
 			v5 = _mm256_sub_ps(v5, _mm256_set1_ps(CENTERJSAMPLE));
-			_mm256_store_ps(buf + y * n, v5);
+			_mm256_storeu_ps(buf + y * n, v5);
 		}
 #elif 1 && defined(USE_SSE2)
 		for (y = 0; y < n; y++) {
@@ -290,7 +290,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	v5 = _mm_max_ps(v5, _mm_setzero_ps()); \
 	v5 = _mm_min_ps(v5, _mm_set1_ps(MAXJSAMPLE)); \
 	v5 = _mm_sub_ps(v5, _mm_set1_ps(CENTERJSAMPLE)); \
-	_mm_store_ps(buf + y * n + x, v5);
+	_mm_storeu_ps(buf + y * n + x, v5);
 			M1(lo, sumAA1, sumAB1, 0) M1(hi, sumAA2, sumAB2, 4)
 #undef M1
 		}
@@ -792,7 +792,7 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 							((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
 
 					for (blk_x = 0; blk_x < comp_width; blk_x++) {
-						float buf[DCTSIZE2]; int x, y, n = DCTSIZE;
+						float ALIGN(32) buf[DCTSIZE2]; int x, y, n = DCTSIZE;
 						JSAMPLE *p = mem + blk_y * n * st + blk_x * n;
 						JCOEFPTR coef = buffer[0][blk_x];
 						for (y = 0; y < n; y++)
