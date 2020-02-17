@@ -39,7 +39,7 @@
 static wchar_t ofnbuf[FNLEN_MAX], sfnbuf[FNLEN_MAX];
 static OPENFILENAME ofn, sfn;
 static const wchar_t *appname = L"JPEGQS Wrapper";
-static LPCWSTR jpeqqs_exe;
+static LPCWSTR jpegqs_exe;
 static HWND hwndDlg = NULL;
 static HANDLE hErrRead = INVALID_HANDLE_VALUE;
 static HANDLE infoThread = INVALID_HANDLE_VALUE;
@@ -214,10 +214,10 @@ static void cbLoad(int use_ofn) {
 		si.hStdOutput = hOutWrite;
 		si.hStdError = hErrWrite;
 		{
-			wchar_t jpegqs_cmd[FNLEN_MAX + OPTLEN + 8];
+			wchar_t jpegqs_cmd[FNLEN_MAX + OPTLEN + 40];
 			snwprintf(jpegqs_cmd, sizeof(jpegqs_cmd) / sizeof(jpegqs_cmd[0]),
-					L"%S -- \"%s\" -", options, ofnbuf);
-			ret = CreateProcess(jpeqqs_exe, jpegqs_cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+					L"%s %S -- \"%s\" -", jpegqs_exe, options, ofnbuf);
+			ret = CreateProcess(NULL, jpegqs_cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
 		}
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
@@ -227,7 +227,7 @@ static void cbLoad(int use_ofn) {
 		if (!ret) {
 			wchar_t strbuf[80];
 			snwprintf(strbuf, sizeof(strbuf) / sizeof(strbuf[0]),
-				L"CreateProcess(\"%s\") failed with code %i\n", jpeqqs_exe, GetLastError());
+				L"CreateProcess(\"%s\") failed with code %i\n", jpegqs_exe, GetLastError());
 			MessageBox(hwndDlg, strbuf, appname, MB_OK);
 			CloseHandle(hErrRead);
 		} else {
@@ -365,7 +365,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 				if (cpuid[1] & (1 << 5)) i = 2;
 			}
 		}
-		jpeqqs_exe = tab[i];
+		jpegqs_exe = tab[i];
 	}
 
 	{
@@ -383,11 +383,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	DialogBoxParam(0, MAKEINTRESOURCE(IDD_DIALOG), NULL, (DLGPROC)DialogProc, (LPARAM)NULL);
 
 	{
-    HKEY hKey;
-    LSTATUS status = RegCreateKeyExA(HKEY_CURRENT_USER, regkey, 0, NULL,
+		HKEY hKey;
+		LSTATUS status = RegCreateKeyExA(HKEY_CURRENT_USER, regkey, 0, NULL,
 				REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_QUERY_VALUE, NULL, &hKey, NULL);
 		if (status == ERROR_SUCCESS) {
-	    RegSetValueExA(hKey, "options", 0, REG_SZ, (LPBYTE)options, strlen(options) + 1);
+			RegSetValueExA(hKey, "options", 0, REG_SZ, (LPBYTE)options, strlen(options) + 1);
 			RegCloseKey(hKey);
 		}
 	}
