@@ -9,10 +9,10 @@
 			<button id="load" disabled>Load</button>
 			<button id="save" disabled>Save</button>
 			<br>
-			options:<br>
+			Options:<br>
 			<input id="cmdline" type="text" value="--optimize --info 8 --quality 3"></input><br>
-			filename:<br>
-			<input id="filename" type="text" value="<empty>"></input><br>
+			Filename:<br>
+			<input id="filename" type="text" value="" disabled></input><br>
 			<br>
 			<div id="status">You need to enable JavaScript to run this app.</div>
 			<div>
@@ -30,6 +30,7 @@ var loadElement = document.getElementById('load');
 var saveElement = document.getElementById('save');
 outputElement.value = '';
 loadElement.disabled = true;
+saveElement.disabled = true;
 saveElement.disabled = true;
 
 /* var */ Module = {
@@ -106,7 +107,7 @@ function cbProcess(input) {
 	}
 	Module.HEAPU8[cmd_addr + cmd_size] = 0;
 
-	Module.print("Imput size: " + inp_size);
+	Module.print("Input size: " + inp_size);
 	Module.print("Processing...");
 
 	Module.HEAPU32[prm_addr/4] = cmd_addr;
@@ -145,6 +146,7 @@ function initDrop() {
 function readFile(file) {
 	Module.print("Loading \"" + file.name + "\"");
 	document.getElementById('filename').value = file.name;
+	document.getElementById('filename').disabled = false;
 
 	var reader = new FileReader();
 	reader.onload = function(e) {

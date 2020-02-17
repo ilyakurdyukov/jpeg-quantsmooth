@@ -40,6 +40,19 @@
 #include "jversion.h"
 #endif
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+// conflict with libjpeg typedef
+#define INT32 INT32_WIN
+#include <windows.h>
+#define USE_SETMODE
+#endif
+
+#ifdef USE_SETMODE
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -51,7 +64,44 @@
 #endif
 
 #define WITH_LOG
+
+#ifdef WITH_LOG
+#ifdef _WIN32
+static int64_t get_time_usec() {
+	LARGE_INTEGER freq, perf;
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&perf);
+	return perf.QuadPart * 1000000.0 / freq.QuadPart;
+}
+#else
+#include <time.h>
+#include <sys/time.h>
+static int64_t get_time_usec() {
+	struct timeval time;
+	gettimeofday(&time, NULL);
+	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
+}
+#endif
+#endif
+
 #include "quantsmooth.h"
+
+#define CONCAT(a, b) a##b
+#ifdef UNICODE
+#define S(s) CONCAT(L, s)
+#define LS "%S"
+#else
+#define S(s) s
+#define LS "%s"
+#endif
+
+#ifndef TCHAR
+#ifdef UNICODE
+#define TCHAR wchar_t
+#else
+#define TCHAR char
+#endif
+#endif
 
 #ifdef WASM
 #define MEM_INPUT
@@ -78,15 +128,15 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 }
 #endif
 
-void jpeg_init_source(j_decompress_ptr cinfo) { }
-boolean jpeg_fill_input_buffer(j_decompress_ptr cinfo) { return FALSE; }
+void jpeg_init_source(j_decompress_ptr cinfo) { (void)cinfo; }
+boolean jpeg_fill_input_buffer(j_decompress_ptr cinfo) { (void)cinfo; return FALSE; }
 void jpeg_skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
 	struct jpeg_source_mgr *src = cinfo->src;
-	if (num_bytes > src->bytes_in_buffer) num_bytes = src->bytes_in_buffer;
+	if ((size_t)num_bytes > src->bytes_in_buffer) num_bytes = src->bytes_in_buffer;
 	src->next_input_byte += (size_t)num_bytes;
 	src->bytes_in_buffer -= (size_t)num_bytes;
 }
-void jpeg_term_source(j_decompress_ptr cinfo) { }
+void jpeg_term_source(j_decompress_ptr cinfo) { (void)cinfo; }
 #endif
 
 #ifdef MEM_OUTPUT
@@ -163,7 +213,16 @@ EMSCRIPTEN_KEEPALIVE
 int web_process(int64_t *params) {
 	char *cmdline = (char*)params[0];
 #else
+#ifdef UNICODE
+// unicode hacks
+#define strcmp(a, b) wcscmp(a, S(b))
+#define atoi(a) _wtoi(a)
+#define fopen(a, b) _wfopen(a, S(b))
+#pragma GCC diagnostic ignored "-Wformat"
+int wmain(int argc, wchar_t **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
 #endif
 	struct jpeg_decompress_struct srcinfo;
 	struct jpeg_compress_struct dstinfo;
@@ -192,23 +251,23 @@ int main(int argc, char **argv) {
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
 #else
 #ifndef APPNAME
-	const char *progname = argv[0], *fn;
+	const TCHAR *progname = argv[0], *fn;
 #else
-	const char *progname = TOSTRING(APPNAME), *fn;
+	const TCHAR *progname = S(TOSTRING(APPNAME)), *fn;
 #endif
 #endif
 
 	while (argc > 1) {
-		const char *arg1 = argv[1], *arg2 = argc > 2 ? argv[2] : NULL, *arg = arg1; char c;
+		const TCHAR *arg1 = argv[1], *arg2 = argc > 2 ? argv[2] : NULL, *arg = arg1; TCHAR c;
 		if (arg[0] != '-' || !(c = arg[1])) break;
 		if (c != '-') switch (c) {
-			case 'o': arg = "--optimize"; c = 0; break;
-			case 'v': arg = "--verbose"; break;
-			case 'i': arg = "--info"; break;
-			case 'n': arg = "--niter"; break;
-			case 'q': arg = "--quality"; break;
-			case 't': arg = "--threads"; break;
-			case 'f': arg = "--flags"; break;
+			case 'o': arg = S("--optimize"); c = 0; break;
+			case 'v': arg = S("--verbose"); break;
+			case 'i': arg = S("--info"); break;
+			case 'n': arg = S("--niter"); break;
+			case 'q': arg = S("--quality"); break;
+			case 't': arg = S("--threads"); break;
+			case 'f': arg = S("--flags"); break;
 			default: c = '-';
 		}
 		if (c != '-' && arg1[2]) {
@@ -329,7 +388,7 @@ int main(int argc, char **argv) {
 "Uses libjpeg, run with \"--verbose 1\" to show its version and copyright\n"
 "\n"
 "Usage:\n"
-"  %s [options] input.jpg output.jpg\n"
+"  " LS " [options] input.jpg output.jpg\n"
 "\n"
 "Options:\n"
 "  -q, --quality n   Quality setting (1-6, default is 3)\n"
@@ -361,7 +420,7 @@ int main(int argc, char **argv) {
 #ifndef WASM
 	input_mem = loadfile(fn, &input_size);
 	if (!input_mem) {
-		logfmt("%s: can't open input file \"%s\"\n", progname, fn);
+		logfmt(LS ": can't open input file \"" LS "\"\n", progname, fn);
 		return 1;
 	}
 #endif
@@ -380,9 +439,13 @@ int main(int argc, char **argv) {
 #else
 	if (strcmp(fn, "-")) {
 		if ((input_file = fopen(fn, "rb")) == NULL) {
-			logfmt("%s: can't open input file \"%s\"\n", progname, fn);
+			logfmt(LS ": can't open input file \"" LS "\"\n", progname, fn);
 			return 1;
 		}
+	} else {
+#ifdef USE_SETMODE
+	  setmode(fileno(stdin), O_BINARY);
+#endif
 	}
 	jpeg_stdio_src(&srcinfo, input_file);
 #endif
@@ -406,9 +469,13 @@ int main(int argc, char **argv) {
 	fn = argv[2];
 	if (strcmp(fn, "-")) {
 		if ((output_file = fopen(fn, "wb")) == NULL) {
-			logfmt("%s: can't open output file \"%s\"\n", progname, fn);
+			logfmt(LS ": can't open output file \"" LS "\"\n", progname, fn);
 			return 1;
 		}
+	} else {
+#ifdef USE_SETMODE
+	  setmode(fileno(stdout), O_BINARY);
+#endif
 	}
 	jpeg_stdio_dest(&dstinfo, output_file);
 #endif
@@ -434,9 +501,13 @@ int main(int argc, char **argv) {
 	fn = argv[2];
 	if (strcmp(fn, "-")) {
 		if ((output_file = fopen(fn, "wb")) == NULL) {
-			logfmt("%s: can't open output file \"%s\"\n", progname, fn);
+			logfmt(LS ": can't open output file \"" LS "\"\n", progname, fn);
 			return 1;
 		}
+	} else {
+#ifdef USE_SETMODE
+	  setmode(fileno(stdout), O_BINARY);
+#endif
 	}
 	if (dest_mgr.buffer) {
 		fwrite(dest_mgr.buffer, 1, dest_mgr.size, output_file);
@@ -457,19 +528,18 @@ int main(int argc, char **argv) {
 	const char *progname = "quantsmooth", *fn;
 	uint8_t *input_mem; size_t input_size;
 
-	for (n = 1; n < argc; ) {
-		const char *str = argv[n];
-		if (str[0] != '-') break;
-		if (str[1] != '-') break;
-		n++;
-		if (str[2] == 0) break;
-		cmd_size += strlen(str) + 3;
+	if (argc < 3) {
+		logfmt("Unrecognized command line.\n");
+		return 1;
 	}
+
+	for (n = 1; n < argc - 2; n++)
+		cmd_size += strlen(argv[n]) + 3;
 	cmdline = malloc(cmd_size);
 	if (!cmdline) return 1;
 
 	cmd_size = 0;
-	for (i = 1; i < n; i++) {
+	for (i = 1; i < argc - 2; i++) {
 		const char *str = argv[i];
 		int len = strlen(str);
 		cmdline[cmd_size++] = '"';
@@ -483,13 +553,7 @@ int main(int argc, char **argv) {
 
 	// printf("cmdline: %s\n", cmdline);
 
-	argv += n - 1;
-	argc -= n - 1;
-
-	if (argc != 3) {
-		logfmt("Unrecognized command line.\n");
-		return 1;
-	}
+	argv += argc - 3;
 
 	fn = argv[1];
 	input_mem = loadfile(fn, &input_size);
