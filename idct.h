@@ -1,5 +1,5 @@
 /*
- * idct_islow SSE2/AVX2/NEON intrinsic optimization:
+ * idct/fdct SSE2/AVX2/NEON intrinsic optimizations:
  * Copyright (C) 2016-2020 Kurdyukov Ilya
  *
  * contains modified parts of libjpeg:
@@ -562,7 +562,7 @@ x3 = _mm_unpackhi_ps(t0, t1);
 		M4(v4, v5, v6, v7, x4, x5, x6, x7)
 #undef M4
 
-#define M1(i) _mm_storeu_ps(out + (i & 3) * 8 + (i & 4), x##i);
+#define M1(i) _mm_storeu_ps(out + (i & 3) * DCTSIZE + (i & 4), x##i);
 		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
 #undef M1
 	}

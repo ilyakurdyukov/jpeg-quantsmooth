@@ -24,6 +24,32 @@
 #include <math.h>
 #endif
 
+#ifdef WITH_LOG
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#ifdef INT32
+#undef INT32
+#endif
+// conflict with libjpeg typedef
+#define INT32 INT32_WIN
+#include <windows.h>
+static int64_t get_time_usec() {
+	LARGE_INTEGER freq, perf;
+	QueryPerformanceFrequency(&freq);
+	QueryPerformanceCounter(&perf);
+	return perf.QuadPart * 1000000.0 / freq.QuadPart;
+}
+#else
+#include <time.h>
+#include <sys/time.h>
+static int64_t get_time_usec() {
+	struct timeval time;
+	gettimeofday(&time, NULL);
+	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
+}
+#endif
+#endif
+
 #ifndef NO_SIMD
 #if defined(__SSE2__)
 #define USE_SSE2
@@ -85,17 +111,10 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 #define ALIGN(n) __attribute__((aligned(n)))
 
 #include "idct.h"
-
-enum {
-	JPEGQS_ITER_SHIFT = 16,
-	JPEGQS_ITER_MAX = 0xff,
-	JPEGQS_FLAGS_SHIFT = 8,
-	JPEGQS_FLAGS_MASK = 0xff,
-	JPEGQS_DIAGONALS = 1 << 8,
-	JPEGQS_JOINT_YUV = 2 << 8,
-	JPEGQS_UPSAMPLE_UV = 4 << 8,
-	JPEGQS_INFO_MASK = 0xff
-};
+#ifndef JPEGQS_ATTR
+#define JPEGQS_ATTR static
+#endif
+#include "libjpegqs.h"
 
 static float ALIGN(32) quantsmooth_tables[DCTSIZE2][DCTSIZE2 * 4 + DCTSIZE * (4 - 2)];
 
@@ -559,7 +578,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	}
 }
 
-static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
+JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
 	jpeg_component_info *compptr;
@@ -800,20 +819,35 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 			w1 = (comp_width * DCTSIZE + ws - 1) / ws;
 			h1 = (comp_height * DCTSIZE + hs - 1) / hs;
 
+			// faster case for 4:2:0
+			if (1 && !((ws - 2) | (hs - 2))) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-			for (y = 0; y < h1; y++) {
-				int x, h2 = comp_height * DCTSIZE - y * hs;
-				h2 = h2 < hs ? h2 : hs;
-				for (x = 0; x < w1; x++) {
-					JSAMPLE *p = image + (y * hs + 1) * stride + x * ws + 1;
-					int xx, yy, sum = 0, w2 = comp_width * DCTSIZE - x * ws, div; 
-					w2 = w2 < ws ? w2 : ws; div = w2 * h2;
+				for (y = 0; y < h1; y++) {
+					int x;
+					for (x = 0; x < w1; x++) {
+						JSAMPLE *p = image + (y * 2 + 1) * stride + x * 2 + 1;
+						int a = p[0] + p[1] + p[stride] + p[stride + 1];
+						image2[(y + 1) * st + x + 1] = (a + 2) >> 2;
+					}
+				}
+			} else {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+				for (y = 0; y < h1; y++) {
+					int x, h2 = comp_height * DCTSIZE - y * hs;
+					h2 = h2 < hs ? h2 : hs;
+					for (x = 0; x < w1; x++) {
+						JSAMPLE *p = image + (y * hs + 1) * stride + x * ws + 1;
+						int xx, yy, sum = 0, w2 = comp_width * DCTSIZE - x * ws, div; 
+						w2 = w2 < ws ? w2 : ws; div = w2 * h2;
 
-					for (yy = 0; yy < h2; yy++)
-					for (xx = 0; xx < w2; xx++) sum += p[yy * stride + xx];
-					image2[(y + 1) * st + x + 1] = (sum + div / 2) / div;
+						for (yy = 0; yy < h2; yy++)
+						for (xx = 0; xx < w2; xx++) sum += p[yy * stride + xx];
+						image2[(y + 1) * st + x + 1] = (sum + div / 2) / div;
+					}
 				}
 			}
 
@@ -858,19 +892,21 @@ static void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_
 		if (qtbl) for (i = 0; i < DCTSIZE2; i++) qtbl->quantval[i] = 1;
 	}
 
-#ifdef JPEGQS_READER
-	// things needed for jpeg_read_scanlines() to work correctly
-	if (image1) {
+#ifndef TRANSCODE_ONLY
+	if (!(flags & JPEGQS_TRANSCODE)) {
+		// things needed for jpeg_read_scanlines() to work correctly
+		if (image1) {
 #ifdef LIBJPEG_TURBO_VERSION
-		srcinfo->master->last_MCU_col[1] = srcinfo->master->last_MCU_col[0];
-		srcinfo->master->last_MCU_col[2] = srcinfo->master->last_MCU_col[0];
+			srcinfo->master->last_MCU_col[1] = srcinfo->master->last_MCU_col[0];
+			srcinfo->master->last_MCU_col[2] = srcinfo->master->last_MCU_col[0];
 #endif
-		jinit_color_deconverter(srcinfo);
-		jinit_upsampler(srcinfo);
-		jinit_d_main_controller(srcinfo, FALSE);
-		srcinfo->input_iMCU_row = (srcinfo->output_height + DCTSIZE - 1) / DCTSIZE;
+			jinit_color_deconverter(srcinfo);
+			jinit_upsampler(srcinfo);
+			jinit_d_main_controller(srcinfo, FALSE);
+			srcinfo->input_iMCU_row = (srcinfo->output_height + DCTSIZE - 1) / DCTSIZE;
+		}
+		jinit_inverse_dct(srcinfo);
 	}
-	jinit_inverse_dct(srcinfo);
 #endif
 }
 

@@ -35,7 +35,7 @@
 #include <omp.h>
 #endif
 
-#define JPEGQS_READER
+// use "libjpegqs.h" for linking with library
 #include "quantsmooth.h"
 
 typedef struct {

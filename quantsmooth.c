@@ -65,26 +65,13 @@
 
 #define WITH_LOG
 
-#ifdef WITH_LOG
-#ifdef _WIN32
-static int64_t get_time_usec() {
-	LARGE_INTEGER freq, perf;
-	QueryPerformanceFrequency(&freq);
-	QueryPerformanceCounter(&perf);
-	return perf.QuadPart * 1000000.0 / freq.QuadPart;
-}
+#define TRANSCODE_ONLY
+#ifdef SIMD_SELECT
+#define JPEGQS_ATTR static
+#include "libjpegqs.c"
 #else
-#include <time.h>
-#include <sys/time.h>
-static int64_t get_time_usec() {
-	struct timeval time;
-	gettimeofday(&time, NULL);
-	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
-}
-#endif
-#endif
-
 #include "quantsmooth.h"
+#endif
 
 #define CONCAT(a, b) a##b
 #ifdef UNICODE
@@ -331,6 +318,7 @@ int main(int argc, char **argv) {
 		else jpegqs_flags = (jpegqs_flags & JPEGQS_FLAGS_MASK) << JPEGQS_FLAGS_SHIFT;
 		jpegqs_flags |= cmd_info & JPEGQS_INFO_MASK;
 		jpegqs_flags |= niter << JPEGQS_ITER_SHIFT;
+		jpegqs_flags |= JPEGQS_TRANSCODE;
 	}
 
 #ifdef WASM
