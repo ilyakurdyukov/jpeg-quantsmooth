@@ -517,6 +517,55 @@ x3 = _mm256_unpackhi_ps(t0, t1);
 #define M1(i) _mm256_storeu_ps(out + i * DCTSIZE, x##i);
 	M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
 #undef M1
+#elif 1 && defined(USE_SSE2)
+	__m128 *ws, buf[DCTSIZE2] ALIGN(16); int i;
+	__m128 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m128 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD _mm_add_ps
+#define SUB _mm_sub_ps
+#define MUL _mm_mul_ps
+#define SET1 _mm_set1_ps
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, in += 4, ws += 4) {
+#define M1(i) _mm_loadu_ps(in + i * DCTSIZE)
+#define M2(i, t) ws[(i & 3) + (i & 4) * 2] = t;
+		M3
+#undef M1
+#undef M2
+	}
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, ws += 8, out += 4 * DCTSIZE) {
+#define M1(i) v##i = ws[i];
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = _mm_unpacklo_ps(v0, v2); \
+t1 = _mm_unpacklo_ps(v1, v3); \
+x0 = _mm_unpacklo_ps(t0, t1); \
+x1 = _mm_unpackhi_ps(t0, t1); \
+t0 = _mm_unpackhi_ps(v0, v2); \
+t1 = _mm_unpackhi_ps(v1, v3); \
+x2 = _mm_unpacklo_ps(t0, t1); \
+x3 = _mm_unpackhi_ps(t0, t1);
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#define M1(i) x##i
+#define M2(i, t) v##i = MUL(t, SET1(0.125f));
+		M3
+#undef M1
+#undef M2
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M4
+
+#define M1(i) _mm_storeu_ps(out + (i & 3) * 8 + (i & 4), x##i);
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+	}
 #else
 	float *ws, buf[DCTSIZE2]; int i;
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
