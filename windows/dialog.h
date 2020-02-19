@@ -1,4 +1,6 @@
 
+#define IDI_JPEGQS   10
+
 #define IDD_DIALOG   100
 #define IDC_LOAD     101
 #define IDC_STATUS   102

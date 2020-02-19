@@ -43,6 +43,7 @@ static LPCWSTR jpegqs_exe;
 static HWND hwndDlg = NULL;
 static HANDLE hErrRead = INVALID_HANDLE_VALUE;
 static HANDLE infoThread = INVALID_HANDLE_VALUE;
+static const wchar_t *msg_multdrop = L"Multiple file drop unsupported.";
 
 static CRITICAL_SECTION CriticalSection[1];
 #define LOCK(i) EnterCriticalSection(&CriticalSection[i]);
@@ -260,11 +261,16 @@ static void cbLoad(int use_ofn) {
 	UNLOCK(0)
 }
 
-INT_PTR WINAPI DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+INT_PTR WINAPI DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	(void)lParam;
 
-	switch (msg) {
+	switch (uMsg) {
 		case WM_INITDIALOG:
+				{
+					HINSTANCE hInst = GetModuleHandle(NULL);
+					HICON hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_JPEGQS));
+					if (hIcon) SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+				}
 				hwndDlg = hwnd;
 				ofn.hwndOwner = sfn.hwndOwner = hwnd;
 				SetDlgItemTextA(hwnd, IDC_OPTIONS, options);
@@ -291,7 +297,7 @@ INT_PTR WINAPI DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 			HDROP hDrop = (HDROP)wParam;
 			int n = DragQueryFile(hDrop, -1, NULL, 0);
 			if (n != 1) {
-				MessageBox(hwnd, L"Multiple file drop unsupported.", appname, MB_OK);
+				MessageBox(hwnd, msg_multdrop, appname, MB_OK);
 			} else {
 				if (DragQueryFile(hDrop, 0, ofnbuf, FNLEN_MAX)) cbLoad(0);
 			}
@@ -309,6 +315,16 @@ INT_PTR WINAPI DialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 			break;
 	}
 	return FALSE;
+}
+
+static const TCHAR *nextarg(const TCHAR *cmd, const TCHAR **arg, int *len) {
+	TCHAR a = 0, e = ' '; const TCHAR *s;
+	if (cmd) do a = *cmd++; while (a == ' ');
+	if (a == '"') { e = a; a = *cmd++; }
+	s = cmd;
+	while (a && a != e) a = *cmd++;
+	*arg = s - 1; *len = cmd - s;
+	return a ? cmd : NULL;
 }
 
 int WINAPI WinMain(HINSTANCE hInstance,
@@ -357,22 +373,40 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			strcpy(options, "--optimize --info 8 --quality 3");
 	}
 
-	InitializeCriticalSection(&CriticalSection[0]);
-
-	logmem = malloc(LOGINCR);
-	logmax = LOGINCR; logcur = 0;
-	DialogBoxParam(0, MAKEINTRESOURCE(IDD_DIALOG), NULL, (DLGPROC)DialogProc, (LPARAM)NULL);
-
 	{
-		HKEY hKey;
-		LSTATUS status = RegCreateKeyExA(HKEY_CURRENT_USER, regkey, 0, NULL,
-				REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_QUERY_VALUE, NULL, &hKey, NULL);
-		if (status == ERROR_SUCCESS) {
-			RegSetValueExA(hKey, "options", 0, REG_SZ, (LPBYTE)options, strlen(options) + 1);
-			RegCloseKey(hKey);
+		int n1, n2; const TCHAR *cmd = GetCommandLine(), *arg1, *arg2;
+		cmd = nextarg(cmd, &arg1, &n1);
+		cmd = nextarg(cmd, &arg1, &n1);
+		cmd = nextarg(cmd, &arg2, &n2);
+		if (n2) {
+			MessageBox(NULL, msg_multdrop, appname, MB_OK);
+			return 0;
+		} else if (n1) {
+			memcpy(ofnbuf, arg1, n1 * sizeof(TCHAR));
+			ofnbuf[n1] = 0;
 		}
 	}
 
+	InitializeCriticalSection(&CriticalSection[0]);
+
+	if (ofnbuf[0]) {
+		cbLoad(0);
+		cbSave();
+	} else {
+		logmem = malloc(LOGINCR);
+		logmax = LOGINCR; logcur = 0;
+		DialogBoxParam(0, MAKEINTRESOURCE(IDD_DIALOG), NULL, (DLGPROC)DialogProc, (LPARAM)NULL);
+
+		{
+			HKEY hKey;
+			LSTATUS status = RegCreateKeyExA(HKEY_CURRENT_USER, regkey, 0, NULL,
+					REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_QUERY_VALUE, NULL, &hKey, NULL);
+			if (status == ERROR_SUCCESS) {
+				RegSetValueExA(hKey, "options", 0, REG_SZ, (LPBYTE)options, strlen(options) + 1);
+				RegCloseKey(hKey);
+			}
+		}
+	}
 	LOCK(0)
 	closeHandles();
 	UNLOCK(0)

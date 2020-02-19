@@ -2,6 +2,8 @@
 #include "winuser.h"
 #include "dialog.h"
 
+IDI_JPEGQS ICON "jpegqs.ico"
+
 #define DlgW 256
 #define DlgH 196
 #define BR 6
@@ -13,7 +15,7 @@
 
 IDD_DIALOG DIALOGEX 0, 0, DlgW, DlgH
 STYLE DS_SETFONT | DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | DS_3DLOOK | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
-CAPTION "JPEGQS Wrapper"
+CAPTION "JPEG Quant Smooth"
 FONT 8, "MS Shell Dlg"
 {
   PUSHBUTTON "Load", IDC_LOAD, BR, BR, BW, BH, WS_DISABLED | WS_TABSTOP
