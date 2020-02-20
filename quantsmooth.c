@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
 
 		if (jpegqs_flags < 0) jpegqs_flags = flags;
 		else jpegqs_flags = (jpegqs_flags & JPEGQS_FLAGS_MASK) << JPEGQS_FLAGS_SHIFT;
-		jpegqs_flags |= cmd_info & JPEGQS_INFO_MASK;
+		jpegqs_flags |= (cmd_info & JPEGQS_INFO_MASK) << JPEGQS_INFO_SHIFT;
 		jpegqs_flags |= niter << JPEGQS_ITER_SHIFT;
 		jpegqs_flags |= JPEGQS_TRANSCODE;
 	}

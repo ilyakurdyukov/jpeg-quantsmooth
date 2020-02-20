@@ -66,41 +66,29 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	z2 = M1(0); z3 = M1(4); \
 	tmp0 = SHL(ADD(z2, z3), CONST_BITS); \
 	tmp1 = SHL(SUB(z2, z3), CONST_BITS); \
-	tmp10 = ADD(tmp0, tmp3); \
-	tmp13 = SUB(tmp0, tmp3); \
-	tmp11 = ADD(tmp1, tmp2); \
-	tmp12 = SUB(tmp1, tmp2); \
-\
+	tmp10 = ADD(tmp0, tmp3); tmp13 = SUB(tmp0, tmp3); \
+	tmp11 = ADD(tmp1, tmp2); tmp12 = SUB(tmp1, tmp2); \
 	tmp0 = M1(7); tmp1 = M1(5); tmp2 = M1(3); tmp3 = M1(1); \
-	z1 = ADD(tmp0, tmp3); \
-	z2 = ADD(tmp1, tmp2); \
-	z3 = ADD(tmp0, tmp2); \
-	z4 = ADD(tmp1, tmp3); \
-	z5 = MUL(ADD(z3, z4), SET1(FIX_1_175875602)); /* sqrt(2) * c3 */ \
-\
-	tmp0 = MUL(tmp0, SET1(FIX_0_298631336)); /* sqrt(2) * (-c1+c3+c5-c7) */ \
-	tmp1 = MUL(tmp1, SET1(FIX_2_053119869)); /* sqrt(2) * ( c1+c3-c5+c7) */ \
-	tmp2 = MUL(tmp2, SET1(FIX_3_072711026)); /* sqrt(2) * ( c1+c3+c5-c7) */ \
-	tmp3 = MUL(tmp3, SET1(FIX_1_501321110)); /* sqrt(2) * ( c1+c3-c5-c7) */ \
-	z1 = MUL(z1, SET1(FIX_0_899976223)); /* sqrt(2) * (c7-c3) */ \
-	z2 = MUL(z2, SET1(FIX_2_562915447)); /* sqrt(2) * (-c1-c3) */ \
-	z3 = MUL(z3, SET1(FIX_1_961570560)); /* sqrt(2) * (-c3-c5) */ \
-	z4 = MUL(z4, SET1(FIX_0_390180644)); /* sqrt(2) * (c5-c3) */ \
-	z3 = SUB(z5, z3); \
-	z4 = SUB(z5, z4); \
+	z1 = ADD(tmp0, tmp3); z2 = ADD(tmp1, tmp2); \
+	z3 = ADD(tmp0, tmp2); z4 = ADD(tmp1, tmp3); \
+	z5 = MUL(ADD(z3, z4), SET1(FIX_1_175875602)); \
+	tmp0 = MUL(tmp0, SET1(FIX_0_298631336)); \
+	tmp1 = MUL(tmp1, SET1(FIX_2_053119869)); \
+	tmp2 = MUL(tmp2, SET1(FIX_3_072711026)); \
+	tmp3 = MUL(tmp3, SET1(FIX_1_501321110)); \
+	z1 = MUL(z1, SET1(FIX_0_899976223)); \
+	z2 = MUL(z2, SET1(FIX_2_562915447)); \
+	z3 = MUL(z3, SET1(FIX_1_961570560)); \
+	z4 = MUL(z4, SET1(FIX_0_390180644)); \
+	z3 = SUB(z5, z3); z4 = SUB(z5, z4); \
 	tmp0 = ADD(tmp0, SUB(z3, z1)); \
 	tmp1 = ADD(tmp1, SUB(z4, z2)); \
 	tmp2 = ADD(tmp2, SUB(z3, z2)); \
 	tmp3 = ADD(tmp3, SUB(z4, z1)); \
-\
-	M2(0, ADD(tmp10, tmp3)) \
-	M2(7, SUB(tmp10, tmp3)) \
-	M2(1, ADD(tmp11, tmp2)) \
-	M2(6, SUB(tmp11, tmp2)) \
-	M2(2, ADD(tmp12, tmp1)) \
-	M2(5, SUB(tmp12, tmp1)) \
-	M2(3, ADD(tmp13, tmp0)) \
-	M2(4, SUB(tmp13, tmp0))
+	M2(0, ADD(tmp10, tmp3)) M2(7, SUB(tmp10, tmp3)) \
+	M2(1, ADD(tmp11, tmp2)) M2(6, SUB(tmp11, tmp2)) \
+	M2(2, ADD(tmp12, tmp1)) M2(5, SUB(tmp12, tmp1)) \
+	M2(3, ADD(tmp13, tmp0)) M2(4, SUB(tmp13, tmp0))
 
 #if 1 && defined(USE_NEON)
 	int ctr; int32x4_t *wsptr, workspace[DCTSIZE2] ALIGN(16);

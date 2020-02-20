@@ -86,6 +86,14 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 #include <immintrin.h>
 #endif
 
+#ifdef __FMA__
+#include <immintrin.h>
+#else
+#define _mm256_fmadd_ps(a, b, c) _mm256_add_ps(_mm256_mul_ps(a, b), c)
+#define _mm256_fmsub_ps(a, b, c) _mm256_sub_ps(_mm256_mul_ps(a, b), c)
+#define _mm256_fnmadd_ps(a, b, c) _mm256_sub_ps(c, _mm256_mul_ps(a, b))
+#endif
+
 #if defined(__ARM_NEON__) || defined(__aarch64__)
 #define USE_NEON
 #include <arm_neon.h>
@@ -227,12 +235,14 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			scale = _mm256_div_ps(_mm256_cvtepi32_ps(sumAB), scale);
 			scale = _mm256_max_ps(scale, _mm256_set1_ps(-16.0f));
 			scale = _mm256_min_ps(scale, _mm256_set1_ps(16.0f));
-			v5 = _mm256_mul_ps(_mm256_cvtepi32_ps(v2), scale);
-			offset = _mm256_sub_ps(_mm256_cvtepi32_ps(v3), v5);
+			v5 = _mm256_cvtepi32_ps(v2); offset = _mm256_cvtepi32_ps(v3);
+			// offset = _mm256_sub_ps(offset, _mm256_mul_ps(v5, scale));
+			offset = _mm256_fnmadd_ps(v5, scale, offset);
 			offset = _mm256_mul_ps(offset, _mm256_set1_ps(1.0f / 16));
 			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
 			v5 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0));
-			v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), offset);
+			// v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), offset);
+			v5 = _mm256_fmadd_ps(v5, scale, offset);
 			v5 = _mm256_max_ps(v5, _mm256_setzero_ps());
 			v5 = _mm256_min_ps(v5, _mm256_set1_ps(MAXJSAMPLE));
 			v5 = _mm256_sub_ps(v5, _mm256_set1_ps(CENTERJSAMPLE));
@@ -337,22 +347,20 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #if 1 && defined(USE_NEON)
 #define VINIT \
 	int16x8_t v0, v5; uint16x8_t v6 = vdupq_n_u16(range); \
-	float32x4_t f0, f1, f2, f3; uint8x8_t i0, i1, i2; \
+	float32x4_t f0, f1; uint8x8_t i0, i1, i2; \
 	float32x4_t s0 = vdupq_n_f32(0), s1 = s0, s2 = s0, s3 = s0;
 
 #define VCORE(tab) \
 	v0 = vreinterpretq_s16_u16(vsubl_u8(i0, i1)); \
 	v5 = vreinterpretq_s16_u16(vqsubq_u16(v6, \
 			vreinterpretq_u16_s16(vabsq_s16(v0)))); \
-	VCORE1(low, f0, f1, tab) VCORE1(high, f2, f3, tab+4) \
-	s0 = vaddq_f32(s0, f0); s1 = vaddq_f32(s1, f1); \
-	s2 = vaddq_f32(s2, f2); s3 = vaddq_f32(s3, f3); \
+	VCORE1(low, s0, s1, tab) VCORE1(high, s2, s3, tab+4)
 
-#define VCORE1(low, f0, f1, tab) \
+#define VCORE1(low, s0, s1, tab) \
 	f0 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))); \
 	f0 = vmulq_f32(f0, f0); f1 = vmulq_f32(f0, vld1q_f32(tab)); \
 	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0)))); \
-	f0 = vmulq_f32(f0, f1); f1 = vmulq_f32(f1, f1);
+	s0 = vmlaq_f32(s0, f0, f1); s1 = vmlaq_f32(s1, f1, f1);
 
 #define VFIN { \
 	float32x4x2_t p0; float32x2_t v0; \
@@ -377,8 +385,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v5)); \
 	f0 = _mm256_mul_ps(f0, f0); f1 = _mm256_mul_ps(f0, f4); \
 	f0 = _mm256_mul_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v4))); \
-	f0 = _mm256_mul_ps(f0, f1); f1 = _mm256_mul_ps(f1, f1); \
-	s0 = _mm256_add_ps(s0, f0); s1 = _mm256_add_ps(s1, f1);
+	s0 = _mm256_fmadd_ps(f0, f1, s0); s1 = _mm256_fmadd_ps(f1, f1, s1);
 
 #define VFIN \
 	f0 = _mm256_permute2f128_ps(s0, s1, 0x20); \
@@ -396,21 +403,20 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #elif 1 && defined(USE_SSE2)
 #define VINIT \
 	__m128i v0, v1, v2, v3, v4, v5, v6 = _mm_set1_epi16(range), v7 = _mm_setzero_si128(); \
-	__m128 f0, f1, f2, f3, s0 = _mm_setzero_ps(), s1 = s0, s2 = s0, s3 = s0;
+	__m128 f0, f1, s0 = _mm_setzero_ps(), s1 = s0, s2 = s0, s3 = s0;
 
 #define VCORE(tab) \
 	v4 = _mm_sub_epi16(v0, v1); v3 = _mm_srai_epi16(v4, 15); \
 	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v4)); \
-	VCORE1(lo, f0, f1, tab) VCORE1(hi, f2, f3, tab+4) \
-	s0 = _mm_add_ps(s0, f0); s1 = _mm_add_ps(s1, f1); \
-	s2 = _mm_add_ps(s2, f2); s3 = _mm_add_ps(s3, f3);
+	VCORE1(lo, s0, s1, tab) VCORE1(hi, s2, s3, tab+4)
 
-#define VCORE1(lo, f0, f1, tab) \
+#define VCORE1(lo, s0, s1, tab) \
 	f0 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)); \
 	f0 = _mm_mul_ps(f0, f0); \
 	f1 = _mm_mul_ps(f0, _mm_load_ps(tab)); \
 	f0 = _mm_mul_ps(f0, _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v4, v3))); \
-	f0 = _mm_mul_ps(f0, f1); f1 = _mm_mul_ps(f1, f1);
+	f0 = _mm_mul_ps(f0, f1); f1 = _mm_mul_ps(f1, f1); \
+	s0 = _mm_add_ps(s0, f0); s1 = _mm_add_ps(s1, f1);
 
 #define VFIN \
 	f0 = _mm_add_ps(s0, s2); f1 = _mm_add_ps(s1, s3); \
@@ -588,7 +594,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 #ifdef WITH_LOG
 	int64_t time = 0;
 
-	if (flags & 1)
+	if (flags & JPEGQS_INFO_COMP1)
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		compptr = srcinfo->comp_info + ci;
 		i = compptr->quant_tbl_no;
@@ -596,7 +602,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 				compptr->h_samp_factor, compptr->v_samp_factor);
 	}
 
-	if (flags & 2)
+	if (flags & JPEGQS_INFO_QUANT)
 	for (i = 0; i < NUM_QUANT_TBLS; i++) {
 		int x, y;
 		qtbl = srcinfo->quant_tbl_ptrs[i];
@@ -610,12 +616,8 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 		}
 	}
 
-	if (flags & 8) time = get_time_usec();
+	if (flags & JPEGQS_INFO_TIME) time = get_time_usec();
 #endif
-
-	if (!num_iter) return;
-
-	quantsmooth_init(flags);
 
 	compptr = srcinfo->comp_info;
 	if (flags & (JPEGQS_JOINT_YUV | JPEGQS_UPSAMPLE_UV) &&
@@ -625,19 +627,27 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 		need_downsample = 1;
 	}
 
+	if (!num_iter && !(flags & JPEGQS_UPSAMPLE_UV && need_downsample)) return;
+
+	quantsmooth_init(flags);
+
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
-		int extra_refresh = 0;
+		int extra_refresh = 0, num_iter2 = num_iter;
 		compptr = srcinfo->comp_info + ci;
 		comp_width = compptr->width_in_blocks;
 		comp_height = compptr->height_in_blocks;
 		if (!(qtbl = compptr->quant_table)) continue;
 
+		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
+
 		// skip if already processed
 		{
 			int val = 0;
 			for (i = 0; i < DCTSIZE2; i++) val |= qtbl->quantval[i];
-			if (val <= 1) continue;
+			if (val <= 1) num_iter2 = 0;
 		}
+
+		if (num_iter2 + extra_refresh == 0) continue;
 
 		// keeping block pointers aligned
 		stride = comp_width * DCTSIZE + 8;
@@ -646,7 +656,8 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 		image += 7;
 
 #ifdef WITH_LOG
-		if (flags & 4) logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
+		if (flags & JPEGQS_INFO_COMP2)
+			logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
 #define IMAGEPTR (blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1
 
@@ -655,9 +666,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 		for (i = 0; i < DCTSIZE; i++) output_buf[i] = image + i * stride;
 #endif
 
-		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
-
-		for (iter = 0; iter < num_iter + extra_refresh; iter++) {
+		for (iter = 0; iter < num_iter2 + extra_refresh; iter++) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -687,7 +696,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 				memcpy(image + (h + 1) * stride, image + h * stride, stride * sizeof(JSAMPLE));
 			}
 
-			if (iter == num_iter) break;
+			if (iter == num_iter2) break;
 
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -876,7 +885,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 	}
 
 #ifdef WITH_LOG
-	if (flags & 8) {
+	if (flags & JPEGQS_INFO_TIME) {
 		time = get_time_usec() - time;
 		logfmt("quantsmooth: %.3fms\n", time * 0.001);
 	}
@@ -910,3 +919,30 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 #endif
 }
 
+#ifndef TRANSCODE_ONLY
+JPEGQS_ATTR
+boolean jpegqs_start_decompress(j_decompress_ptr cinfo, int32_t control) {
+	boolean ret; int32_t use_jpeqqs = control &
+			((JPEGQS_ITER_MAX << JPEGQS_ITER_SHIFT) | JPEGQS_UPSAMPLE_UV);
+	if (use_jpeqqs) cinfo->buffered_image = TRUE;
+	ret = jpeg_start_decompress(cinfo);
+	if (use_jpeqqs) {
+		while (!jpeg_input_complete(cinfo)) {
+			jpeg_start_output(cinfo, cinfo->input_scan_number);
+			jpeg_finish_output(cinfo);
+		}
+		do_quantsmooth(cinfo, jpeg_read_coefficients(cinfo), control);
+		jpeg_start_output(cinfo, cinfo->input_scan_number);
+	}
+	return ret;
+}
+
+JPEGQS_ATTR
+boolean jpegqs_finish_decompress(j_decompress_ptr cinfo) {
+	if ((cinfo->global_state == DSTATE_SCANNING ||
+			cinfo->global_state == DSTATE_RAW_OK) && cinfo->buffered_image) {
+		jpeg_finish_output(cinfo);
+	}
+	return jpeg_finish_decompress(cinfo);
+}
+#endif

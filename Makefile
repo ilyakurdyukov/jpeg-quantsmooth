@@ -23,7 +23,7 @@ SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
 SIMDFLG := -march=native
 else ifeq ($(SIMD),avx2)
-SIMDFLG := -mavx2
+SIMDFLG := -mavx2 -mfma
 else ifeq ($(SIMD),sse2)
 SIMDFLG := -msse2
 endif
@@ -114,7 +114,7 @@ endif
 
 jpegqs_%.o: quantsmooth.h idct.h libjpegqs.h
 jpegqs_avx2.o: libjpegqs.c
-	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=avx2 -mavx2 $(CFLAGS_APP) -c -o $@ $<
+	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -c -o $@ $<
 jpegqs_sse2.o: libjpegqs.c
 	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -c -o $@ $<
 jpegqs_base.o: libjpegqs.c

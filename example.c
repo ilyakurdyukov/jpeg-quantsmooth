@@ -82,60 +82,45 @@ bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
 	bitmap_jpeg_err_ctx jerr;
 	ci.err = jpeg_std_error(&jerr.pub);
 	jerr.pub.error_exit = bitmap_jpeg_err;
-	if (!setjmp(jerr.setjmp_buffer)) {
-		unsigned x, y, width, height, stride; uint8_t *data;
+	if (!setjmp(jerr.setjmp_buffer)) do {
+		unsigned x, y, w, h, st; uint8_t *data;
 		bitmap_t *bm1; JSAMPROW *scanline;
-		int run_quantsmooth = control & (JPEGQS_ITER_MAX << JPEGQS_ITER_SHIFT);
 
 		jpeg_create_decompress(&ci);
-		if (!(fp = fopen(filename, "rb"))) goto err;
+		if (!(fp = fopen(filename, "rb"))) break;
 		jpeg_stdio_src(&ci, fp);
 		jpeg_read_header(&ci, TRUE);
 		ci.out_color_space = JCS_RGB;
-		if (run_quantsmooth) ci.buffered_image = TRUE;
-		jpeg_start_decompress(&ci);
-		if (run_quantsmooth) {
-			while (!jpeg_input_complete(&ci)) {
-				jpeg_start_output(&ci, ci.input_scan_number);
-				jpeg_finish_output(&ci);
+		jpegqs_start_decompress(&ci, control);
+
+		w = ci.output_width;
+		h = ci.output_height;
+		bm = bm1 = bitmap_create(w, h, 3);
+		if (!bm1) break;
+		mem = scanline = (JSAMPROW*)malloc(h * sizeof(JSAMPROW));
+		if (!scanline) break;
+		st = bm1->stride; data = bm1->data;
+
+		// BMP uses reverse row order
+		for (y = 0; y < h; y++)
+			scanline[y] = (JSAMPLE*)(data + (h - 1 - y) * st);
+
+		while ((y = ci.output_scanline) < h)
+			jpeg_read_scanlines(&ci, scanline + y, h - y);
+
+		// need to convert RGB to BGR for BMP
+		for (y = 0; y < h; y++) {
+			JSAMPLE *p = data + y * st, t;
+			for (x = 0; x < w * 3; x += 3) {
+				t = p[x]; p[x] = p[x + 2]; p[x + 2] = t;
 			}
-			do_quantsmooth(&ci, jpeg_read_coefficients(&ci), control);
-			jpeg_start_output(&ci, ci.input_scan_number);
+			for (; x < st; x++) p[x] = 0;
 		}
 
-		width = ci.output_width;
-		height = ci.output_height;
-		bm = bm1 = bitmap_create(width, height, 3);
-		if (bm1) {
-			stride = bm1->stride; data = bm1->data;
-			mem = malloc(height * sizeof(JSAMPROW));
-			if (mem) {
-				scanline = (JSAMPROW*)mem;
-				// BMP uses reverse row order
-				for (y = 0; y < height; y++)
-					scanline[y] = (JSAMPLE*)(data + (height - 1 - y) * stride);
+		ok = 1;
+		jpegqs_finish_decompress(&ci);
+	} while (0);
 
-				while ((y = ci.output_scanline) < height) {
-					jpeg_read_scanlines(&ci, scanline + y, height - y);
-				}
-
-				// need to convert RGB to BGR for BMP
-				for (y = 0; y < height; y++) {
-					for (x = 0; x < width; x++) {
-						JSAMPLE *p = &data[y * stride + x * 3], t;
-						t = p[0]; p[0] = p[2]; p[2] = t;
-					}
-					for (x = width * 3; x < stride; x++) data[y * stride + x] = 0;
-				}
-
-				ok = 1;
-			}
-		}
-
-		if (run_quantsmooth) jpeg_finish_output(&ci);
-		jpeg_finish_decompress(&ci);
-	}
-err:
 	if (mem) free(mem);
 	if (!ok) { bitmap_free(bm); bm = NULL; }
 	jpeg_destroy_decompress(&ci);
@@ -171,7 +156,7 @@ int main(int argc, char **argv) {
 		bmp[9] = h * st;
 
 		if ((f = fopen(ofn, "wb"))) {
-			n = fwrite((uint8_t*)bmp+2, 1, n, f);
+			n = fwrite((uint8_t*)bmp + 2, 1, n, f);
 			n = fwrite(bm->data, 1, h * st, f);
 			fclose(f);
 		}
