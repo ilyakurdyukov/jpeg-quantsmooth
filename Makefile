@@ -36,9 +36,11 @@ ifeq ($(SIMD),select)
 CFLAGS_APP += -DSIMD_SELECT
 endif
 
-.PHONY: clean all
+.PHONY: clean all app lib
 
-all: $(APPNAME)
+app: $(APPNAME)
+all: app lib
+lib: lib$(APPNAME).a
 
 WGET_CMD = @echo "run make with WGET_CMD=wget to allow file downloads" ; echo "DISABLED:" wget
 
@@ -78,7 +80,7 @@ JPEGLIB = -ljpeg
 CFLAGS_APP += $(filter -I%,$(JPEGLIB))
 
 clean:
-	rm -f $(APPNAME) jpegqs*.o
+	rm -f $(APPNAME) jpegqs_*.o libjpegqs_*.o lib$(APPNAME).a
 
 $(APPNAME): $(SRCNAME) $(SIMDOBJ)
 	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(JPEGLIB) $(SIMDOBJ) -lm
@@ -103,7 +105,7 @@ OBJLIST := $(patsubst %,$(OBJDIR)/%.o,$(SOURCES))
 CFLAGS_APP += -DWITH_JPEGSRC -I$(JPEGSRC) -I.
 
 clean:
-	rm -f $(APPNAME) $(OBJLIST) jpegqs*.o
+	rm -f $(APPNAME) $(OBJLIST) jpegqs_*.o libjpegqs_*.o lib$(APPNAME).a
 
 $(OBJDIR)/%.o: $(JPEGSRC)/%.c
 	$(CC) $(CFLAGS_LIB) -I$(JPEGSRC) -I. -c -o $@ $<
@@ -112,11 +114,32 @@ $(APPNAME): $(SRCNAME) $(OBJLIST) $(SIMDOBJ)
 	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(OBJLIST) $(SIMDOBJ) -lm
 endif
 
+ifeq ($(SRCNAME),example.c)
+SIMDSEL_FLAGS ?=
+else
+SIMDSEL_FLAGS ?= -DTRANSCODE_ONLY -DWITH_LOG
+endif
+
 jpegqs_%.o: quantsmooth.h idct.h libjpegqs.h
 jpegqs_avx2.o: libjpegqs.c
-	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -c -o $@ $<
 jpegqs_sse2.o: libjpegqs.c
-	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -c -o $@ $<
 jpegqs_base.o: libjpegqs.c
-	$(CC) -DTRANSCODE_ONLY -DWITH_LOG -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
+
+ifeq ($(SIMD),select)
+lib$(APPNAME).a: libjpegqs_avx2.o libjpegqs_sse2.o libjpegqs_base.o
+endif
+lib$(APPNAME).a: libjpegqs.o
+	$(AR) -rsc $@ $^
+
+libjpegqs.o: libjpegqs.c
+	$(CC) $(CFLAGS_APP) -c -o $@ $<
+libjpegqs_avx2.o: libjpegqs.c
+	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -c -o $@ $<
+libjpegqs_sse2.o: libjpegqs.c
+	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -c -o $@ $<
+libjpegqs_base.o: libjpegqs.c
+	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
 

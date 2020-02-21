@@ -366,11 +366,14 @@ int WINAPI WinMain(HINSTANCE hInstance,
 #endif
 
 	{
-		DWORD size = OPTLEN;
-		LSTATUS status = RegGetValueA(HKEY_CURRENT_USER,
-				regkey, "options", RRF_RT_REG_SZ, NULL, options, &size);
-		if (status != ERROR_SUCCESS)
-			strcpy(options, "--optimize --info 8 --quality 3");
+		HKEY hKey; DWORD size = OPTLEN - 1;
+		LSTATUS status = RegOpenKeyExA(HKEY_CURRENT_USER, regkey, 0, KEY_READ, &hKey);
+		if (status == ERROR_SUCCESS) {
+			status = RegQueryValueExA(hKey, "options", 0, NULL, (LPBYTE)options, &size);
+			if (status == ERROR_SUCCESS) options[size] = 0;
+			RegCloseKey(hKey);
+		}
+		if (status != ERROR_SUCCESS) strcpy(options, "--optimize --info 8 --quality 3");
 	}
 
 	{

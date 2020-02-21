@@ -338,7 +338,12 @@ int main(int argc, char **argv) {
 		logfmt("Compiled with libjpeg version %d\n", JPEG_LIB_VERSION);
 #endif
 #if defined(JVERSION) && defined(JCOPYRIGHT)
-		logfmt("Version string: " JVERSION "\n" JCOPYRIGHT "\n\n");
+#ifdef JCOPYRIGHT_SHORT
+#define JPEG_COPYRIGHT JCOPYRIGHT_SHORT
+#else
+#define JPEG_COPYRIGHT JCOPYRIGHT
+#endif
+		logfmt("Version string: " JVERSION "\n" JPEG_COPYRIGHT "\n\n");
 #else
 		// Search for libjpeg copyright (to work with static and dynamic linking)
 		{
@@ -371,7 +376,7 @@ int main(int argc, char **argv) {
 #ifndef WASM
 	if (argc != 3) {
 		logfmt(
-"JPEG Quant Smooth : Copyright (c) 2020 Ilya Kurdyukov\n"
+"JPEG Quant Smooth : " JPEGQS_COPYRIGHT " : " JPEGQS_VERSION "\n"
 "Build date: " __DATE__ "\n"
 "Uses libjpeg, run with \"--verbose 1\" to show its version and copyright\n"
 "\n"

@@ -34,6 +34,9 @@ enum {
 #define JPEGQS_ATTR
 #endif
 
+#define JPEGQS_VERSION "2020-02-21"
+#define JPEGQS_COPYRIGHT "Copyright (c) 2020 Ilya Kurdyukov"
+
 JPEGQS_ATTR
 void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags);
 

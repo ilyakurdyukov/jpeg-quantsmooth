@@ -43,17 +43,17 @@ typedef struct {
 } bitmap_t;
 
 static bitmap_t *bitmap_create(int width, int height, int bpp) {
-	bitmap_t *image; int stride = width * bpp;
-	if ((unsigned)((width - 1) | (height - 1)) >= 0x8000) return 0;
-	image = (bitmap_t*)malloc(sizeof(bitmap_t) + stride * height);
-	if (!image) return 0;
-	image->width = width;
-	image->height = height;
-	image->bpp = bpp;
+	bitmap_t *bm;
 	// BMP needs 4-byte row alignment
-	image->stride = (width * bpp + 3) & -4;
-	image->data = (uint8_t*)(image + 1);
-	return image;
+	int stride = (width * bpp + 3) & -4;
+	bm = (bitmap_t*)malloc(sizeof(bitmap_t) + height * stride);
+	if (!bm) return bm;
+	bm->width = width;
+	bm->height = height;
+	bm->bpp = bpp;
+	bm->stride = stride;
+	bm->data = (uint8_t*)(bm + 1);
+	return bm;
 }
 
 static void bitmap_free(bitmap_t *in) {

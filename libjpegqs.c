@@ -22,6 +22,9 @@
 #include <string.h>
 #include <stdint.h>
 
+#ifndef TRANSCODE_ONLY
+#define JPEG_INTERNALS
+#endif
 #include "jpeglib.h"
 
 #if defined(SIMD_SELECT) && !defined(SIMD_NAME)
