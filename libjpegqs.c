@@ -83,8 +83,8 @@ JPEGQS_ATTR void do_quantsmooth QS_ARGS {
 #define logfmt(...) fprintf(stderr, __VA_ARGS__)
 #ifdef SIMD_NAME
 #define QS_CONCAT(x) do_quantsmooth_##x
-#define QS_NAME(x) QS_CONCAT(x)
-#define do_quantsmooth QS_NAME(SIMD_NAME)
+#define QS_NAME1(x) QS_CONCAT(x)
+#define QS_NAME QS_NAME1(SIMD_NAME)
 #endif
 #define JPEGQS_ATTR
 #include "quantsmooth.h"

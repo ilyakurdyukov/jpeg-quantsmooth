@@ -584,7 +584,10 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	}
 }
 
-JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
+#ifndef QS_NAME
+#define QS_NAME do_quantsmooth
+#endif
+JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
 	jpeg_component_info *compptr;
@@ -919,7 +922,7 @@ JPEGQS_ATTR void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_
 #endif
 }
 
-#ifndef TRANSCODE_ONLY
+#if !defined(TRANSCODE_ONLY) && !defined(NO_HELPERS)
 JPEGQS_ATTR
 boolean jpegqs_start_decompress(j_decompress_ptr cinfo, int32_t control) {
 	boolean ret; int32_t use_jpeqqs = control &

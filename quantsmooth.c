@@ -297,6 +297,7 @@ int main(int argc, char **argv) {
 		else break;
 	}
 
+	(void)threads;
 #ifdef _OPENMP
 	if (threads > 0) {
 		omp_set_num_threads(threads);
