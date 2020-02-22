@@ -28,7 +28,9 @@
 #include <string.h>
 #include <stdint.h>
 #include <setjmp.h>
+#ifdef WITH_JPEGSRC
 #define JPEG_INTERNALS
+#endif
 #include "jpeglib.h"
 
 #ifdef _OPENMP

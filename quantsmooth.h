@@ -24,6 +24,30 @@
 #include <math.h>
 #endif
 
+#if !defined(TRANSCODE_ONLY) && !defined(JPEG_INTERNALS)
+// declarations needed from jpegint.h
+
+#define DSTATE_SCANNING 205
+#define DSTATE_RAW_OK 206
+
+EXTERN(void) jinit_d_main_controller(j_decompress_ptr, boolean);
+EXTERN(void) jinit_inverse_dct(j_decompress_ptr);
+EXTERN(void) jinit_upsampler(j_decompress_ptr);
+EXTERN(void) jinit_color_deconverter(j_decompress_ptr);
+
+struct jpeg_decomp_master {
+  void (*prepare_for_output_pass) (j_decompress_ptr);
+  void (*finish_output_pass) (j_decompress_ptr);
+  boolean is_dummy_pass;
+#ifdef LIBJPEG_TURBO_VERSION
+  JDIMENSION first_iMCU_col, last_iMCU_col;
+  JDIMENSION first_MCU_col[MAX_COMPONENTS];
+  JDIMENSION last_MCU_col[MAX_COMPONENTS];
+  boolean jinit_upsampler_no_alloc;
+#endif
+};
+#endif
+
 #ifdef WITH_LOG
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN

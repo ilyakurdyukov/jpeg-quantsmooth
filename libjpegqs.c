@@ -22,7 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#ifndef TRANSCODE_ONLY
+#if !defined(TRANSCODE_ONLY) && defined(WITH_JPEGSRC)
 #define JPEG_INTERNALS
 #endif
 #include "jpeglib.h"
