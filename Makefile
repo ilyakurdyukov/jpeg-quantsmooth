@@ -30,6 +30,8 @@ SIMDFLG := -msse2
 endif
 # multithreading options
 MTOPTS := -fopenmp
+# path to save "libgomp.a"
+LIBMINIOMP ?=
 
 CFLAGS_LIB := -Wall -O2 $(MFLAGS) $(SIMDFLG)
 CFLAGS_APP := $(CFLAGS_LIB) -Wextra -pedantic $(MTOPTS)
@@ -77,14 +79,10 @@ libjpeg-turbo-2.%/libjpeg.a: libjpeg-turbo-2.%/.libs/Makefile
 .PRECIOUS: libjpeg-turbo-2.%/.libs/Makefile
 
 ifeq ($(JPEGSRC),)
-JPEGLIB = -ljpeg
+JPEGLIB ?= -ljpeg
+JPEGLIB2 += $(JPEGLIB)
 CFLAGS_APP += $(filter -I%,$(JPEGLIB))
-
-clean:
-	rm -f $(APPNAME) jpegqs_*.o libjpegqs*.o lib$(APPNAME).a
-
-$(APPNAME): $(SRCNAME) $(SIMDOBJ)
-	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(JPEGLIB) $(SIMDOBJ) -lm
+OBJLIST :=
 else
 OBJDIR ?= $(JPEGSRC)
 ALLSRC := $(patsubst $(JPEGSRC)/%.c,%,$(wildcard $(JPEGSRC)/*.c))
@@ -105,15 +103,23 @@ SOURCES += $(filter jdphuff jcphuff jaricom jdarith jcarith,$(ALLSRC))
 OBJLIST := $(patsubst %,$(OBJDIR)/%.o,$(SOURCES))
 CFLAGS_APP += -DWITH_JPEGSRC -I$(JPEGSRC) -I.
 
-clean:
-	rm -f $(APPNAME) $(OBJLIST) jpegqs_*.o libjpegqs*.o lib$(APPNAME).a
-
 $(OBJDIR)/%.o: $(JPEGSRC)/%.c
 	$(CC) $(CFLAGS_LIB) -I$(JPEGSRC) -I. -c -o $@ $<
 
-$(APPNAME): $(SRCNAME) $(OBJLIST) $(SIMDOBJ)
-	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(OBJLIST) $(SIMDOBJ) -lm
+JPEGLIB2 := $(OBJLIST)
+$(APPNAME): $(OBJLIST)
 endif
+
+clean:
+	rm -f $(APPNAME) $(OBJLIST) jpegqs_*.o libjpegqs*.o lib$(APPNAME).a miniomp.o $(LIBMINIOMP)
+
+ifneq ($(LIBMINIOMP),)
+JPEGLIB2 += -L$(dir $(LIBMINIOMP))
+$(APPNAME): $(LIBMINIOMP)
+endif
+
+$(APPNAME): $(SRCNAME) $(SIMDOBJ)
+	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(JPEGLIB2) $(SIMDOBJ) -lm
 
 ifeq ($(SRCNAME),example.c)
 SIMDSEL_FLAGS ?=
@@ -142,4 +148,9 @@ libjpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
 	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
 libjpegqs_base.o: libjpegqs.c $(SRCDEPS)
 	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
+
+$(LIBMINIOMP): miniomp.o
+	$(AR) -rsc $@ $^
+miniomp.o: miniomp.c
+	$(CC) -O2 -Wall -Wextra -c -o $@ $<
 
