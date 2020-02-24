@@ -2,7 +2,9 @@
 APPNAME ?= jpegqs_gui
 SRCNAME ?= jpegqs_gui.c
 
-CFLAGS := -Wall -Wextra -pedantic -O2
+CFLAGS := -Wall -Wextra -pedantic -O2 -mwindows
+CFLAGS += -DWITH_DROP
+CFLAGS += -DSHORTCUT_MENU
 LIBS := -lcomdlg32
 
 .PHONY: clean all
@@ -17,5 +19,5 @@ clean:
 	rm -f $(APPNAME) dialog.o
 
 $(APPNAME): $(SRCNAME) dialog.o
-	$(CC) -DWITH_DROP $(CFLAGS) -s -o $@ $< dialog.o $(LIBS) -mwindows
+	$(CC) $(CFLAGS) -s -o $@ $< dialog.o $(LIBS)
 

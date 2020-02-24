@@ -266,22 +266,25 @@ INT_PTR WINAPI DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 
 	switch (uMsg) {
 		case WM_INITDIALOG:
-				{
-					HINSTANCE hInst = GetModuleHandle(NULL);
-					HICON hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_JPEGQS));
-					if (hIcon) SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
-				}
-				hwndDlg = hwnd;
-				ofn.hwndOwner = sfn.hwndOwner = hwnd;
-				SetDlgItemTextA(hwnd, IDC_OPTIONS, options);
-				SetDlgItemText(hwnd, IDC_FILENAME, L"");
-				EnableWindow(GetDlgItem(hwnd, IDC_LOAD), TRUE);
-				EnableWindow(GetDlgItem(hwnd, IDC_SAVE), FALSE);
-				EnableWindow(GetDlgItem(hwnd, IDC_FILENAME), FALSE);
+			{
+				HINSTANCE hInst = GetModuleHandle(NULL);
+				HICON hIcon = LoadIcon(hInst, MAKEINTRESOURCE(IDI_JPEGQS));
+				if (hIcon) SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+			}
+			hwndDlg = hwnd;
+			ofn.hwndOwner = sfn.hwndOwner = hwnd;
+			SetDlgItemTextA(hwnd, IDC_OPTIONS, options);
+			SetDlgItemText(hwnd, IDC_FILENAME, L"");
+			EnableWindow(GetDlgItem(hwnd, IDC_LOAD), TRUE);
+			EnableWindow(GetDlgItem(hwnd, IDC_SAVE), FALSE);
+			EnableWindow(GetDlgItem(hwnd, IDC_FILENAME), FALSE);
 #ifdef WITH_DROP
-				DragAcceptFiles(hwnd, TRUE);
+			DragAcceptFiles(hwnd, TRUE);
 #endif
-				return TRUE;
+#ifdef SHORTCUT_MENU
+			log_append("Press Ctrl+S for context menu shortcut.\r\n", -1);
+#endif
+			return TRUE;
 
 		case WM_COMMAND:
 			if (HIWORD(wParam) == BN_CLICKED) {
@@ -307,15 +310,91 @@ INT_PTR WINAPI DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 #endif
 
 		case WM_DESTROY:
+			PostQuitMessage(0);
 			break;
 
 		case WM_CLOSE:
 			GetDlgItemTextA(hwnd, IDC_OPTIONS, options, OPTLEN);
+#ifdef SHORTCUT_MENU
+			DestroyWindow(hwnd);
+#else
 			EndDialog(hwnd, 0);
+#endif
 			break;
 	}
 	return FALSE;
 }
+
+#ifdef SHORTCUT_MENU
+static void shell_menu(int action) {
+	const char *regkey = "shell\\jpegqs", *subkey = "shell\\jpegqs\\command";
+	const wchar_t *menuname = L"JPEG &Quant Smooth";
+	const wchar_t *addmsg = L"Add Quant Smooth to shortcut menu for JPEG files?";
+	const wchar_t *remmsg = L"Remove Quant Smooth from shortcut menu?";
+	const char *types[] = { ".jpg", ".jpeg", 0 };
+	char links[2][80];
+	HKEY hKey; LSTATUS status; int i, ret;
+
+	// check for redirects
+	for (i = 0; types[i]; i++) {
+		DWORD size = sizeof(links[0]) - 1;
+		status = RegOpenKeyExA(HKEY_CLASSES_ROOT, types[i], 0, KEY_READ, &hKey);
+		links[i][0] = 0;
+		if (status == ERROR_SUCCESS) {
+			status = RegQueryValueExA(hKey, NULL, 0, NULL, (LPBYTE)links[i], &size);
+			if (status == ERROR_SUCCESS) links[i][size] = 0;
+			else strcpy(links[i], types[i]);
+			RegCloseKey(hKey);
+		}
+	}
+	if (!strcmp(links[0], links[1])) links[1][0] = 0;
+
+	if (action < 0) {
+		char buf[80];
+		if (!links[0][0]) return;
+		snprintf(buf, sizeof(buf), "%s\\%s", links[0], regkey);
+		action = 0;
+		status = RegOpenKeyExA(HKEY_CLASSES_ROOT, buf, 0, KEY_READ, &hKey);
+		if (status == ERROR_SUCCESS) { action = 1; RegCloseKey(hKey); }
+	}
+
+	ret = MessageBox(hwndDlg, action ? remmsg : addmsg, appname, MB_YESNO | MB_ICONQUESTION);
+	if (ret != IDYES) return;
+
+	for (i = 0; types[i]; i++) {
+		HKEY hKey1;
+		if (!links[i][0]) continue;
+		status = RegOpenKeyExA(HKEY_CLASSES_ROOT, links[i], 0, KEY_WRITE | KEY_QUERY_VALUE, &hKey1);
+		if (status != ERROR_SUCCESS) continue;
+		if (!action) {
+			wchar_t exe[FNLEN_MAX]; int len, n = 16;
+			len = GetModuleFileNameW(NULL, exe + 1, FNLEN_MAX - n - 1);
+			exe[0] = '"'; len++;
+#define NEWKEY(name) \
+	status = RegCreateKeyExA(hKey1, name, 0, NULL, \
+			REG_OPTION_NON_VOLATILE, KEY_WRITE | KEY_QUERY_VALUE, NULL, &hKey, NULL); \
+	if (status == ERROR_SUCCESS)
+#define REGSETW(name, str) \
+	RegSetValueExW(hKey, name, 0, REG_SZ, (LPBYTE)str, (wcslen(str) + 1) * sizeof(wchar_t));
+			NEWKEY(regkey) {
+				REGSETW(NULL, menuname)
+				wcscpy(exe + len, L"\",0"); REGSETW(L"Icon", exe)
+				RegCloseKey(hKey);
+				NEWKEY(subkey) {
+					wcscpy(exe + len, L"\" \"%1\""); REGSETW(NULL, exe)
+					RegCloseKey(hKey);
+				}
+			}
+#undef NEWKEY
+#undef REGSETW
+		} else {
+			RegDeleteKeyA(hKey1, subkey);
+			RegDeleteKeyA(hKey1, regkey);
+		}
+		RegCloseKey(hKey1);
+	}
+}
+#endif
 
 static const TCHAR *nextarg(const TCHAR *cmd, const TCHAR **arg, int *len) {
 	TCHAR a = 0, e = ' '; const TCHAR *s;
@@ -335,11 +414,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	const char *regkey = "Software\\JPEG Quant Smooth";
 
 	{
-		int n = GetModuleFileName(NULL, ofnbuf, FNLEN_MAX);
+		int n = GetModuleFileNameW(NULL, ofnbuf, FNLEN_MAX);
 		n = findfn(ofnbuf, n);
 		if (n) {
 			ofnbuf[n] = 0;
-			SetCurrentDirectory(ofnbuf);
+			SetCurrentDirectoryW(ofnbuf);
 		}
 	}
 
@@ -398,7 +477,24 @@ int WINAPI WinMain(HINSTANCE hInstance,
 	} else {
 		logmem = malloc(LOGINCR);
 		logmax = LOGINCR; logcur = 0;
+#ifdef SHORTCUT_MENU
+		{
+			HWND hwnd = CreateDialogParam(0, MAKEINTRESOURCE(IDD_DIALOG), NULL, (DLGPROC)DialogProc, (LPARAM)NULL);
+			if (hwnd) {
+				MSG msg;
+				while (GetMessage(&msg, NULL, 0, 0)) {
+					if (msg.message == WM_KEYDOWN)
+					if (msg.wParam == 'S' && !(msg.lParam & (1 << 30)))
+					if (GetAsyncKeyState(VK_CONTROL) < 0) { shell_menu(-1); continue; }
+					if (IsDialogMessage(hwnd, &msg)) continue;
+					TranslateMessage(&msg);
+					DispatchMessage(&msg);
+				}
+			}
+		}
+#else
 		DialogBoxParam(0, MAKEINTRESOURCE(IDD_DIALOG), NULL, (DLGPROC)DialogProc, (LPARAM)NULL);
+#endif
 
 		{
 			HKEY hKey;

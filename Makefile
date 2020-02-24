@@ -80,7 +80,7 @@ libjpeg-turbo-2.%/libjpeg.a: libjpeg-turbo-2.%/.libs/Makefile
 
 ifeq ($(JPEGSRC),)
 JPEGLIB ?= -ljpeg
-JPEGLIB2 += $(JPEGLIB)
+JPEGLIB2 := $(JPEGLIB)
 CFLAGS_APP += $(filter -I%,$(JPEGLIB))
 OBJLIST :=
 else
@@ -130,7 +130,7 @@ endif
 jpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
 jpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -DSKIP_ON_X64 -c -o $@ $<
 jpegqs_base.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
 
@@ -145,7 +145,7 @@ libjpegqs.o: libjpegqs.c $(SRCDEPS)
 libjpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
 	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
 libjpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
+	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -DSKIP_ON_X64 -c -o $@ $<
 libjpegqs_base.o: libjpegqs.c $(SRCDEPS)
 	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
 

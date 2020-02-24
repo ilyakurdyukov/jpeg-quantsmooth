@@ -35,7 +35,7 @@ typedef char bool;
 #define THREAD_FIELDS HANDLE handle;
 #define THREAD_INIT(t) t.handle = NULL;
 #define THREAD_CREATE(t) { DWORD tid; t.handle = CreateThread(NULL, 0, gomp_threadfunc, (void*)&t, 0, &tid); }
-#define THREAD_JOIN(t) if (t.handle) { WaitForMultipleObjects(1, &t.handle, TRUE, INFINITE); CloseHandle(t.handle); }
+#define THREAD_JOIN(t) if (t.handle) { WaitForSingleObject(t.handle, INFINITE); CloseHandle(t.handle); }
 #else
 #include <pthread.h>
 #define THREAD_CALLBACK(name) void* name(void* param)

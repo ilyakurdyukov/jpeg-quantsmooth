@@ -87,6 +87,8 @@ JPEGQS_ATTR void do_quantsmooth QS_ARGS {
 #define QS_NAME QS_NAME1(SIMD_NAME)
 #endif
 #define JPEGQS_ATTR
+#if !defined(SKIP_ON_X64) || !defined(__x86_64__)
 #include "quantsmooth.h"
+#endif
 #endif
 
