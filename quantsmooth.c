@@ -235,7 +235,7 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, jpeg_verbose = 0;
+	int optimize = 0, jpeg_verbose = 0, cmd_info = 15;
 	int quality = 3, cmd_niter = -1, cmd_flags = -1;
 	jpegqs_control_t opts = { 0 };
 #ifdef _WIN32
@@ -251,8 +251,6 @@ int main(int argc, char **argv) {
 	const TCHAR *progname = S(TOSTRING(APPNAME)), *fn;
 #endif
 #endif
-
-	opts.info = 15;
 
 #ifdef _WIN32
 	if (argc > 2 && !strcmp(argv[1], "--hwnd")) {
@@ -291,7 +289,7 @@ int main(int argc, char **argv) {
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--info")) {
 			CHECKNUM
-			opts.info = atoi(arg2);
+			cmd_info = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--niter")) {
 			CHECKNUM
@@ -324,6 +322,7 @@ int main(int argc, char **argv) {
 		if (quality >= 6) flags |= JPEGQS_UPSAMPLE_UV;
 		opts.niter = cmd_niter >= 0 ? cmd_niter : niter;
 		opts.flags = (cmd_flags >= 0 ? cmd_flags : flags) | JPEGQS_TRANSCODE;
+		opts.flags |= cmd_info << JPEGQS_INFO_SHIFT;
 	}
 
 #ifdef WASM

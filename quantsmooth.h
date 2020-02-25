@@ -623,7 +623,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	jpeg_component_info *compptr;
 	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
 	int num_iter = opts->niter, old_threads = -1;
-	int prog_next = 0, prog_max = 0, prog_thr = 0, prog_prec = 20;
+	int prog_next = 0, prog_max = 0, prog_thr = 0, prog_prec = opts->progprec;
 #ifdef PRECISE_PROGRESS
 	volatile int stop = 0;
 #else
@@ -634,7 +634,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 #ifdef WITH_LOG
 	int64_t time = 0;
 
-	if (opts->info & JPEGQS_INFO_COMP1)
+	if (opts->flags & JPEGQS_INFO_COMP1)
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		compptr = srcinfo->comp_info + ci;
 		i = compptr->quant_tbl_no;
@@ -642,7 +642,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				compptr->h_samp_factor, compptr->v_samp_factor);
 	}
 
-	if (opts->info & JPEGQS_INFO_QUANT)
+	if (opts->flags & JPEGQS_INFO_QUANT)
 	for (i = 0; i < NUM_QUANT_TBLS; i++) {
 		int x, y;
 		qtbl = srcinfo->quant_tbl_ptrs[i];
@@ -656,7 +656,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		}
 	}
 
-	if (opts->info & JPEGQS_INFO_TIME) time = get_time_usec();
+	if (opts->flags & JPEGQS_INFO_TIME) time = get_time_usec();
 #endif
 
 	compptr = srcinfo->comp_info;
@@ -685,7 +685,9 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			compptr = srcinfo->comp_info + ci;
 			prog_max += compptr->height_in_blocks * compptr->v_samp_factor * num_iter;
 		}
-		prog_thr = (prog_max + prog_prec - 1) / prog_prec;
+		if (prog_prec == 0) prog_prec = 20;
+		if (prog_prec < 0) prog_prec = prog_max;
+		prog_thr = (unsigned)(prog_max + prog_prec - 1) / (unsigned)prog_prec;
 	}
 
 	quantsmooth_init(opts->flags);
@@ -735,7 +737,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		image += 7;
 
 #ifdef WITH_LOG
-		if (opts->info & JPEGQS_INFO_COMP2)
+		if (opts->flags & JPEGQS_INFO_COMP2)
 			logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
 #define IMAGEPTR (blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1
@@ -980,7 +982,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	}
 
 #ifdef WITH_LOG
-	if (!stop && opts->info & JPEGQS_INFO_TIME) {
+	if (!stop && opts->flags & JPEGQS_INFO_TIME) {
 		time = get_time_usec() - time;
 		logfmt("quantsmooth: %.3fms\n", time * 0.001);
 	}

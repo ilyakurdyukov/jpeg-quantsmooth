@@ -17,10 +17,11 @@ enum {
 	JPEGQS_JOINT_YUV = 2,
 	JPEGQS_UPSAMPLE_UV = 4,
 	JPEGQS_TRANSCODE = 8,
-	JPEGQS_INFO_COMP1 = 1,
-	JPEGQS_INFO_QUANT = 2,
-	JPEGQS_INFO_COMP2 = 4,
-	JPEGQS_INFO_TIME = 8
+	JPEGQS_INFO_SHIFT = 16,
+	JPEGQS_INFO_COMP1 = 1 << JPEGQS_INFO_SHIFT,
+	JPEGQS_INFO_QUANT = 2 << JPEGQS_INFO_SHIFT,
+	JPEGQS_INFO_COMP2 = 4 << JPEGQS_INFO_SHIFT,
+	JPEGQS_INFO_TIME = 8 << JPEGQS_INFO_SHIFT
 };
 
 #ifndef JPEGQS_ATTR
@@ -31,7 +32,7 @@ enum {
 #define JPEGQS_COPYRIGHT "Copyright (c) 2020 Ilya Kurdyukov"
 
 typedef struct {
-	int info, flags, niter, threads;
+	int flags, niter, threads, progprec;
 	void *userdata;
 	int (*progress)(void *data, int cur, int max);
 } jpegqs_control_t;
