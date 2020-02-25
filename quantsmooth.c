@@ -196,6 +196,15 @@ EMSCRIPTEN_KEEPALIVE
 int web_process(int64_t *params) {
 	char *cmdline = (char*)params[0];
 #else
+#ifdef _WIN32
+typedef struct { HWND hwnd; } progress_data_t;
+static int progress(void *data, int cur, int max) {
+	progress_data_t *prog = (progress_data_t*)data;
+	int percent = (int64_t)100 * cur / max;
+	PostMessage(prog->hwnd, WM_USER, (WPARAM)percent, 0);
+	return 0;
+}
+#endif
 #ifdef UNICODE
 // unicode hacks
 #define strcmp(a, b) wcscmp(a, S(b))
@@ -229,6 +238,9 @@ int main(int argc, char **argv) {
 	int optimize = 0, jpeg_verbose = 0;
 	int quality = 3, cmd_niter = -1, cmd_flags = -1;
 	jpegqs_control_t opts = { 0 };
+#ifdef _WIN32
+	progress_data_t prog;
+#endif
 #ifdef WASM
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
@@ -241,6 +253,15 @@ int main(int argc, char **argv) {
 #endif
 
 	opts.info = 15;
+
+#ifdef _WIN32
+	if (argc > 2 && !strcmp(argv[1], "--hwnd")) {
+		prog.hwnd = (HWND)(intptr_t)atoi(argv[2]);
+		opts.userdata = &prog;
+		opts.progress = progress;
+		argv += 2; argc -= 2;
+	}
+#endif
 
 	while (argc > 1) {
 		const TCHAR *arg1 = argv[1], *arg2 = argc > 2 ? argv[2] : NULL, *arg = arg1; TCHAR c;

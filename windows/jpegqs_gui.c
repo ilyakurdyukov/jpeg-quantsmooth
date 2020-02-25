@@ -42,12 +42,11 @@ static const wchar_t *appname = L"JPEGQS Wrapper";
 static LPCWSTR jpegqs_exe;
 static HWND hwndDlg = NULL;
 static HANDLE hErrRead = INVALID_HANDLE_VALUE;
+static HANDLE hOutRead = INVALID_HANDLE_VALUE;
 static HANDLE infoThread = INVALID_HANDLE_VALUE;
-static const wchar_t *msg_multdrop = L"Multiple file drop unsupported.";
+static HANDLE outThread = INVALID_HANDLE_VALUE;
 
-static CRITICAL_SECTION CriticalSection[1];
-#define LOCK(i) EnterCriticalSection(&CriticalSection[i]);
-#define UNLOCK(i) LeaveCriticalSection(&CriticalSection[i]);
+static const wchar_t *msg_multdrop = L"Multiple file drop unsupported.";
 
 #define OPTLEN 128
 #define OUTINCR (1 << 18)
@@ -58,6 +57,8 @@ static size_t outcur, outmax;
 static char *logmem = NULL;
 static size_t logcur, logmax;
 static char options[OPTLEN];
+
+static volatile int processing = 0;
 
 static void log_grow(size_t n) {
 	if (logcur + n >= logmax) {
@@ -79,17 +80,15 @@ static void log_update(size_t n) {
 }
 
 static void log_append(const char *str, int n) {
-	// LOCK(1)
 	if (!logmem) return;
 	if (n < 0) n = strlen(str);
 	log_grow(n);
 	memcpy(logmem + logcur, str, n);
 	logcur += n; logmem[logcur] = 0;
 	log_update(n);
-	// UNLOCK(1)
 }
 
-static DWORD WINAPI consoleThread(LPVOID lpParam) {
+static DWORD WINAPI infoThreadProc(LPVOID lpParam) {
 	int ret;
 	(void)lpParam;
 	for (;;) {
@@ -107,10 +106,37 @@ static DWORD WINAPI consoleThread(LPVOID lpParam) {
 		log_update(rwCnt);
 	}
 	CloseHandle(hErrRead);
+	WaitForSingleObject(outThread, INFINITE);
 	{
 		char strbuf[80];
 		snprintf(strbuf, sizeof(strbuf), "Output size: %i\r\n", (int)outcur);
 		log_append(strbuf, -1);
+	}
+	return 0;
+}
+
+static DWORD WINAPI outThreadProc(LPVOID lpParam) {
+	int ret;
+	(void)lpParam;
+	outmem = malloc(OUTINCR);
+	outmax = OUTINCR; outcur = 0;
+	for (;;) {
+		DWORD rwCnt;
+		ret = ReadFile(hOutRead, outmem + outcur, outmax - outcur, &rwCnt, NULL);
+		if (!ret || !rwCnt) break;
+		outcur += rwCnt;
+		if (outcur == outmax) {
+			outmem = realloc(outmem, outmax + OUTINCR);
+			outmax += OUTINCR;
+		}
+	}
+	processing = 0;
+	CloseHandle(hOutRead);
+	SetDlgItemText(hwndDlg, IDC_STATUS, L"");
+	if (hwndDlg) {
+		EnableWindow(GetDlgItem(hwndDlg, IDC_LOAD), TRUE);
+		if (outcur)
+			EnableWindow(GetDlgItem(hwndDlg, IDC_SAVE), TRUE);
 	}
 	return 0;
 }
@@ -123,6 +149,10 @@ static void closeHandles() {
 	if (infoThread != INVALID_HANDLE_VALUE) {
 		WaitForSingleObject(infoThread, INFINITE);
 		CloseHandle(infoThread);
+	}
+	if (outThread != INVALID_HANDLE_VALUE) {
+		WaitForSingleObject(outThread, INFINITE);
+		CloseHandle(outThread);
 	}
 }
 
@@ -138,8 +168,7 @@ static int findfn(const wchar_t *path, int n) {
 
 static void cbSave() {
 	int ret;
-	LOCK(0)
-	if (outmem && outcur) {
+	if (!processing && outmem && outcur) {
 		if (!sfnbuf[0]) wcscpy(sfnbuf, ofnbuf);
 		if (hwndDlg) {
 			int n = findfn(sfnbuf, -1);
@@ -156,17 +185,17 @@ static void cbSave() {
 			}
 		}
 	}
-	UNLOCK(0)
 }
 
 static void cbLoad(int use_ofn) {
 	int ret = 1;
-	LOCK(0)
+	if (processing) return;
+	processing = 1;
+
 	if (use_ofn) ret = GetOpenFileName(&ofn);
 	if (ret) {
 		SECURITY_ATTRIBUTES saAttr;
 		STARTUPINFO si; PROCESS_INFORMATION pi;
-		HANDLE hOutRead = INVALID_HANDLE_VALUE;
 		HANDLE hErrWrite = INVALID_HANDLE_VALUE, hOutWrite = hErrRead;
 		DWORD threadId;
 
@@ -215,9 +244,9 @@ static void cbLoad(int use_ofn) {
 		si.hStdOutput = hOutWrite;
 		si.hStdError = hErrWrite;
 		{
-			wchar_t jpegqs_cmd[FNLEN_MAX + OPTLEN + 40];
+			wchar_t jpegqs_cmd[FNLEN_MAX + OPTLEN + 80];
 			snwprintf(jpegqs_cmd, sizeof(jpegqs_cmd) / sizeof(jpegqs_cmd[0]),
-					L"%s %S -- \"%s\" -", jpegqs_exe, options, ofnbuf);
+					L"\"%s\" --hwnd %i %S -- \"%s\" -", jpegqs_exe, (int)(intptr_t)hwndDlg, options, ofnbuf);
 			ret = CreateProcess(NULL, jpegqs_cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
 		}
 		CloseHandle(pi.hProcess);
@@ -231,34 +260,16 @@ static void cbLoad(int use_ofn) {
 				L"CreateProcess(\"%s\") failed with code %i\n", jpegqs_exe, GetLastError());
 			MessageBox(hwndDlg, strbuf, appname, MB_OK);
 			CloseHandle(hErrRead);
-		} else {
-			if (hErrRead != INVALID_HANDLE_VALUE)
-				infoThread = CreateThread(NULL, 0, consoleThread, NULL, 0, &threadId);
-
-			outmem = malloc(OUTINCR);
-			outmax = OUTINCR; outcur = 0;
-			for (;;) {
-				DWORD rwCnt;
-				ret = ReadFile(hOutRead, outmem + outcur, outmax - outcur, &rwCnt, NULL);
-				if (!ret || !rwCnt) break;
-				outcur += rwCnt;
-				if (outcur == outmax) {
-					outmem = realloc(outmem, outmax + OUTINCR);
-					outmax += OUTINCR;
-				}
-			}
-		}
-
-		SetDlgItemText(hwndDlg, IDC_STATUS, L"");
-		CloseHandle(hOutRead);
-
-		if (hwndDlg) {
+			CloseHandle(hOutRead);
+			SetDlgItemText(hwndDlg, IDC_STATUS, L"");
 			EnableWindow(GetDlgItem(hwndDlg, IDC_LOAD), TRUE);
-			if (outcur)
-				EnableWindow(GetDlgItem(hwndDlg, IDC_SAVE), TRUE);
+		} else {
+			infoThread = CreateThread(NULL, 0, infoThreadProc, NULL, 0, &threadId);
+			outThread = CreateThread(NULL, 0, outThreadProc, NULL, 0, &threadId);
+			return;
 		}
 	}
-	UNLOCK(0)
+	processing = 0;
 }
 
 INT_PTR WINAPI DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -294,6 +305,14 @@ INT_PTR WINAPI DialogProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 				}
 			}
 			break;
+
+		case WM_USER:
+			if (processing) {
+				wchar_t buf[40];
+				snwprintf(buf, sizeof(buf), L"Processing: %i%%", (int)wParam);
+				SetDlgItemText(hwnd, IDC_STATUS, buf);
+			}
+			return TRUE;
 
 #ifdef WITH_DROP
 		case WM_DROPFILES: {
@@ -469,11 +488,12 @@ int WINAPI WinMain(HINSTANCE hInstance,
 		}
 	}
 
-	InitializeCriticalSection(&CriticalSection[0]);
-
 	if (ofnbuf[0]) {
 		cbLoad(0);
-		cbSave();
+		if (outThread != INVALID_HANDLE_VALUE) {
+			WaitForSingleObject(outThread, INFINITE);
+			cbSave();
+		}
 	} else {
 		logmem = malloc(LOGINCR);
 		logmax = LOGINCR; logcur = 0;
@@ -506,11 +526,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 			}
 		}
 	}
-	LOCK(0)
 	closeHandles();
-	UNLOCK(0)
 	if (logmem) free(logmem);
-
-	DeleteCriticalSection(&CriticalSection[0]);
 	return 0;
 }
