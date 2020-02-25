@@ -258,7 +258,7 @@ int main(int argc, char **argv) {
 	if (argc > 2 && !strcmp(argv[1], "--hwnd")) {
 		prog.hwnd = (HWND)(intptr_t)atoi(argv[2]);
 		opts.userdata = &prog;
-		opts.progress = progress;
+		if (prog.hwnd) opts.progress = progress;
 		argv += 2; argc -= 2;
 	}
 #endif
