@@ -19,5 +19,5 @@ clean:
 	rm -f $(APPNAME) dialog.o
 
 $(APPNAME): $(SRCNAME) dialog.o
-	$(CC) $(CFLAGS) -s -o $@ $< dialog.o $(LIBS)
+	$(CC) $(CFLAGS) -s -o $@ $< dialog.o $(LIBS) -Wl,--gc-sections
 

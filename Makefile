@@ -32,6 +32,7 @@ endif
 MTOPTS := -fopenmp
 # path to save "libgomp.a"
 LIBMINIOMP ?=
+LFLAGS ?= -Wl,--gc-sections
 
 CFLAGS_LIB := -Wall -O2 $(MFLAGS) $(SIMDFLG)
 CFLAGS_APP := $(CFLAGS_LIB) -Wextra -pedantic $(MTOPTS)
@@ -119,7 +120,7 @@ $(APPNAME): $(LIBMINIOMP)
 endif
 
 $(APPNAME): $(SRCNAME) $(SIMDOBJ)
-	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< -Wl,--gc-sections $(JPEGLIB2) $(SIMDOBJ) -lm
+	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< $(JPEGLIB2) $(SIMDOBJ) $(LFLAGS) -lm
 
 ifeq ($(SRCNAME),example.c)
 SIMDSEL_FLAGS ?=

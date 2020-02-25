@@ -48,7 +48,11 @@ static bitmap_t *bitmap_create(int width, int height, int bpp) {
 	bitmap_t *bm;
 	// BMP needs 4-byte row alignment
 	int stride = (width * bpp + 3) & -4;
-	bm = (bitmap_t*)malloc(sizeof(bitmap_t) + height * stride);
+	uint64_t size = (int64_t)stride * height + sizeof(bitmap_t);
+	// check for overflow
+	if ((unsigned)((width - 1) | (height - 1)) >= 0x10000 ||
+			(uint64_t)(size_t)size != size) return NULL;
+	bm = (bitmap_t*)malloc(size);
 	if (!bm) return bm;
 	bm->width = width;
 	bm->height = height;
@@ -75,7 +79,7 @@ static void bitmap_jpeg_err(j_common_ptr cinfo) {
 	longjmp(jerr->setjmp_buffer, 1);
 }
 
-bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
+bitmap_t* bitmap_read_jpeg(const char *filename, jpegqs_control_t *opts) {
 	struct jpeg_decompress_struct ci;
 	FILE * volatile fp; int volatile ok = 0;
 	bitmap_t * volatile bm = NULL;
@@ -93,7 +97,7 @@ bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
 		jpeg_stdio_src(&ci, fp);
 		jpeg_read_header(&ci, TRUE);
 		ci.out_color_space = JCS_RGB;
-		jpegqs_start_decompress(&ci, control);
+		jpegqs_start_decompress(&ci, opts);
 
 		w = ci.output_width;
 		h = ci.output_height;
@@ -132,22 +136,21 @@ bitmap_t* bitmap_read_jpeg(const char *filename, int32_t control) {
 
 int main(int argc, char **argv) {
 	bitmap_t *bm; const char *ifn, *ofn;
-	int32_t control = 0; int niter = 3;
+	jpegqs_control_t opts;
 
 	if (argc != 3) {
 		printf("Usage: example input.jpg output.bmp\n");
 		return 1;
 	}
-
-	control |= JPEGQS_DIAGONALS; /* -q4 */
-	control |= JPEGQS_JOINT_YUV; /* -q5 */
-	control |= JPEGQS_UPSAMPLE_UV; /* -q6 */
-	if (niter < 0) niter = 0;
-	if (niter > JPEGQS_ITER_MAX) niter = JPEGQS_ITER_MAX;
-	control |= niter << JPEGQS_ITER_SHIFT;
-
 	ifn = argv[1]; ofn = argv[2];
-	bm = bitmap_read_jpeg(ifn, control);
+
+	memset(&opts, 0, sizeof(opts));
+	opts.niter = 3;
+	opts.flags |= JPEGQS_DIAGONALS; /* -q4 */
+	opts.flags |= JPEGQS_JOINT_YUV; /* -q5 */
+	opts.flags |= JPEGQS_UPSAMPLE_UV; /* -q6 */
+
+	bm = bitmap_read_jpeg(ifn, &opts);
 	if (bm) {
 		FILE *f;
 		int w = bm->width, h = bm->height, st = bm->stride;

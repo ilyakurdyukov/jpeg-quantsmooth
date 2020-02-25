@@ -9,10 +9,12 @@ lib="-ljpeg -static"
 omp="libgomp.a"
 test "$omp" && test -d winlib$bits && omp="winlib$bits/$omp"
 
+test -f ldscript$bits.txt && link="-Wl,-T,ldscript$bits.txt" || link=
+
 # make JPEGLIB="$lib" SIMD=avx2 MFLAGS="-municode" APPNAME="jpegqs${bits}_avx2" clean app
 # make JPEGLIB="$lib" SIMD=sse2 MFLAGS="-municode" APPNAME="jpegqs${bits}_sse2" clean app
 # make JPEGLIB="$lib" SIMD=none MFLAGS="-O3 -municode" APPNAME="jpegqs${bits}_none" clean app
 
 rm -f "winlib$bits/libgomp.a"
-make LIBMINIOMP="$omp" JPEGLIB="$lib" SIMD=select MFLAGS="-municode -ffast-math" APPNAME="jpegqs${bits}" clean all
+make LIBMINIOMP="$omp" JPEGLIB="$lib" SIMD=select MFLAGS="-municode -ffast-math" APPNAME="jpegqs${bits}" LFLAGS="$link" clean all
 

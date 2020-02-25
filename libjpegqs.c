@@ -33,7 +33,7 @@
 #endif
 #include "libjpegqs.h"
 
-#define QS_ARGS (j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags)
+#define QS_ARGS (j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts)
 
 #define M1(name) void do_quantsmooth_##name QS_ARGS;
 M1(avx2)
@@ -69,7 +69,7 @@ JPEGQS_ATTR void do_quantsmooth QS_ARGS {
 		type = 2;
 	} while (0);
 
-#define M1(name) do_quantsmooth_##name(srcinfo, src_coef_arrays, flags); break;
+#define M1(name) do_quantsmooth_##name(srcinfo, coef_arrays, opts); break;
 	switch (type) {
 		case 2: M1(avx2)
 #ifndef __x86_64__

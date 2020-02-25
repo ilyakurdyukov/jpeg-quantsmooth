@@ -53,10 +53,6 @@
 #include <io.h>
 #endif
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 #ifdef WASM
 #define logfmt(...) printf(__VA_ARGS__)
 #else
@@ -214,7 +210,7 @@ int main(int argc, char **argv) {
 	struct jpeg_decompress_struct srcinfo;
 	struct jpeg_compress_struct dstinfo;
 	struct jpeg_error_mgr jsrcerr, jdsterr;
-	jvirt_barray_ptr *src_coef_arrays;
+	jvirt_barray_ptr *coef_arrays;
 
 #ifdef MEM_INPUT
 	size_t input_size = 0;
@@ -230,9 +226,9 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, jpeg_verbose = 0, threads = 0;
-	int cmd_info = 15, quality = 3, cmd_niter = -1;
-	int32_t jpegqs_flags = -1;
+	int optimize = 0, jpeg_verbose = 0;
+	int quality = 3, cmd_niter = -1, cmd_flags = -1;
+	jpegqs_control_t opts = { 0 };
 #ifdef WASM
 	int argc = 0;
 	char **argv_ptr = make_argv(cmdline, &argc), **argv = argv_ptr;
@@ -243,6 +239,8 @@ int main(int argc, char **argv) {
 	const TCHAR *progname = S(TOSTRING(APPNAME)), *fn;
 #endif
 #endif
+
+	opts.info = 15;
 
 	while (argc > 1) {
 		const TCHAR *arg1 = argv[1], *arg2 = argc > 2 ? argv[2] : NULL, *arg = arg1; TCHAR c;
@@ -272,7 +270,7 @@ int main(int argc, char **argv) {
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--info")) {
 			CHECKNUM
-			cmd_info = atoi(arg2);
+			opts.info = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--niter")) {
 			CHECKNUM
@@ -284,11 +282,11 @@ int main(int argc, char **argv) {
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--threads")) {
 			CHECKNUM
-			threads = atoi(arg2);
+			opts.threads = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (argc > 2 && !strcmp(arg, "--flags")) {
 			CHECKNUM
-			jpegqs_flags = atoi(arg2);
+			cmd_flags = atoi(arg2);
 			argv += 2; argc -= 2;
 		} else if (!strcmp(arg, "--")) {
 			argv++; argc--;
@@ -297,29 +295,14 @@ int main(int argc, char **argv) {
 		else break;
 	}
 
-	(void)threads;
-#ifdef _OPENMP
-	if (threads > 0) {
-		omp_set_num_threads(threads);
-	}
-#endif
-
 	{
 		int niter = 3, flags = 0;
-		if (quality <= 1) niter = 1;
-		else if (quality <= 2) niter = 2;
-		else if (quality >= 4) flags = JPEGQS_DIAGONALS;
+		if (quality <= 3) niter = quality;
+		if (quality >= 4) flags = JPEGQS_DIAGONALS;
 		if (quality >= 5) flags |= JPEGQS_JOINT_YUV;
 		if (quality >= 6) flags |= JPEGQS_UPSAMPLE_UV;
-
-		niter = cmd_niter >= 0 ? cmd_niter : niter;
-		if (niter > JPEGQS_ITER_MAX) niter = JPEGQS_ITER_MAX;
-
-		if (jpegqs_flags < 0) jpegqs_flags = flags;
-		else jpegqs_flags = (jpegqs_flags & JPEGQS_FLAGS_MASK) << JPEGQS_FLAGS_SHIFT;
-		jpegqs_flags |= (cmd_info & JPEGQS_INFO_MASK) << JPEGQS_INFO_SHIFT;
-		jpegqs_flags |= niter << JPEGQS_ITER_SHIFT;
-		jpegqs_flags |= JPEGQS_TRANSCODE;
+		opts.niter = cmd_niter >= 0 ? cmd_niter : niter;
+		opts.flags = (cmd_flags >= 0 ? cmd_flags : flags) | JPEGQS_TRANSCODE;
 	}
 
 #ifdef WASM
@@ -445,8 +428,8 @@ int main(int argc, char **argv) {
 #endif
 
 	(void) jpeg_read_header(&srcinfo, TRUE);
-	src_coef_arrays = jpeg_read_coefficients(&srcinfo);
-	do_quantsmooth(&srcinfo, src_coef_arrays, jpegqs_flags);
+	coef_arrays = jpeg_read_coefficients(&srcinfo);
+	do_quantsmooth(&srcinfo, coef_arrays, &opts);
 
 	jpeg_copy_critical_parameters(&srcinfo, &dstinfo);
 	if (optimize) dstinfo.optimize_coding = TRUE;
@@ -475,7 +458,7 @@ int main(int argc, char **argv) {
 #endif
 
 	/* Start compressor (note no image data is actually written here) */
-	jpeg_write_coefficients(&dstinfo, src_coef_arrays);
+	jpeg_write_coefficients(&dstinfo, coef_arrays);
 
 	/* Finish compression and release memory */
 	jpeg_finish_compress(&dstinfo);

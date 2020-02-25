@@ -24,6 +24,10 @@
 #include <math.h>
 #endif
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #if !defined(TRANSCODE_ONLY) && !defined(JPEG_INTERNALS)
 // declarations needed from jpegint.h
 
@@ -150,7 +154,7 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 
 static float ALIGN(32) quantsmooth_tables[DCTSIZE2][DCTSIZE2 * 4 + DCTSIZE * (4 - 2)];
 
-static void quantsmooth_init(int32_t flags) {
+static void quantsmooth_init(int flags) {
 	int i, n = DCTSIZE, nn = n * n, n2 = nn + n * 4;
 	float bcoef = flags & JPEGQS_DIAGONALS ? 4.0 : 2.0;
 
@@ -211,7 +215,7 @@ static const char zigzag_refresh[DCTSIZE2] = {
 };
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
-		JSAMPLE *image, JSAMPLE *image2, int stride, int32_t flags) {
+		JSAMPLE *image, JSAMPLE *image2, int stride, int flags) {
 	int k, n = DCTSIZE, x, y, need_refresh = 1;
 	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifdef USE_JSIMD
@@ -611,17 +615,17 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #ifndef QS_NAME
 #define QS_NAME do_quantsmooth
 #endif
-JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_arrays, int32_t flags) {
+JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts) {
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
 	jpeg_component_info *compptr;
 	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
-	int num_iter = (flags >> JPEGQS_ITER_SHIFT) & JPEGQS_ITER_MAX;
+	int num_iter = opts->niter, old_threads = -1;
 
 #ifdef WITH_LOG
 	int64_t time = 0;
 
-	if (flags & JPEGQS_INFO_COMP1)
+	if (opts->info & JPEGQS_INFO_COMP1)
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		compptr = srcinfo->comp_info + ci;
 		i = compptr->quant_tbl_no;
@@ -629,7 +633,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 				compptr->h_samp_factor, compptr->v_samp_factor);
 	}
 
-	if (flags & JPEGQS_INFO_QUANT)
+	if (opts->info & JPEGQS_INFO_QUANT)
 	for (i = 0; i < NUM_QUANT_TBLS; i++) {
 		int x, y;
 		qtbl = srcinfo->quant_tbl_ptrs[i];
@@ -643,20 +647,31 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 		}
 	}
 
-	if (flags & JPEGQS_INFO_TIME) time = get_time_usec();
+	if (opts->info & JPEGQS_INFO_TIME) time = get_time_usec();
 #endif
 
 	compptr = srcinfo->comp_info;
-	if (flags & (JPEGQS_JOINT_YUV | JPEGQS_UPSAMPLE_UV) &&
+	if (opts->flags & (JPEGQS_JOINT_YUV | JPEGQS_UPSAMPLE_UV) &&
 			srcinfo->jpeg_color_space == JCS_YCbCr &&
 			!((compptr[1].h_samp_factor - 1) | (compptr[1].v_samp_factor - 1) |
 			(compptr[2].h_samp_factor - 1) | (compptr[2].v_samp_factor - 1))) {
 		need_downsample = 1;
 	}
 
-	if (!num_iter && !(flags & JPEGQS_UPSAMPLE_UV && need_downsample)) return;
+	if (num_iter < 0) num_iter = 0;
+	if (num_iter > JPEGQS_ITER_MAX) num_iter = JPEGQS_ITER_MAX;
 
-	quantsmooth_init(flags);
+	if (num_iter <= 0 && !(opts->flags & JPEGQS_UPSAMPLE_UV && need_downsample)) return;
+
+	(void)old_threads;
+#ifdef _OPENMP
+	if (opts->threads >= 0) {
+		old_threads = omp_get_max_threads();
+		omp_set_num_threads(opts->threads ? opts->threads : omp_get_num_procs());
+	}
+#endif
+
+	quantsmooth_init(opts->flags);
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		int extra_refresh = 0, num_iter2 = num_iter;
@@ -683,7 +698,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 		image += 7;
 
 #ifdef WITH_LOG
-		if (flags & JPEGQS_INFO_COMP2)
+		if (opts->info & JPEGQS_INFO_COMP2)
 			logfmt("component[%i] : size %ix%i\n", ci, comp_width, comp_height);
 #endif
 #define IMAGEPTR (blk_y * DCTSIZE + 1) * stride + blk_x * DCTSIZE + 1
@@ -700,7 +715,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JCOEFPTR coef = buffer[0][blk_x]; int i;
@@ -731,12 +746,12 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				JDIMENSION blk_x;
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
-					JSAMPLE *p2 = image2 && flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
+					JSAMPLE *p2 = image2 && opts->flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
 					JCOEFPTR coef = buffer[0][blk_x];
-					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, flags);
+					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, opts->flags);
 				}
 			}
 		} // iter
@@ -753,7 +768,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 			compptr[ci].width_in_blocks = comp_width;
 			compptr[ci].height_in_blocks = comp_height;
 
-			src_coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
+			coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
 					((j_common_ptr)srcinfo, JPOOL_IMAGE, FALSE, comp_width, comp_height, 1);
 			(*srcinfo->mem->realize_virt_arrays) ((j_common_ptr)srcinfo);
 
@@ -761,7 +776,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 			// need to suppress JERR_BAD_VIRTUAL_ACCESS
 			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				(*srcinfo->mem->access_virt_barray)
-						((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 			}
 #endif
 
@@ -821,7 +836,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 				for (blk_y = 0; blk_y < comp_height; blk_y++) {
 					JDIMENSION blk_x;
 					JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-							((j_common_ptr)srcinfo, src_coef_arrays[ci], blk_y, 1, TRUE);
+							((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 
 					for (blk_x = 0; blk_x < comp_width; blk_x++) {
 						float ALIGN(32) buf[DCTSIZE2]; int x, y, n = DCTSIZE;
@@ -843,7 +858,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 			ws = compptr[0].h_samp_factor;
 			hs = compptr[0].v_samp_factor;
 			if ((ws - 1) | (hs - 1)) {
-				if (flags & JPEGQS_UPSAMPLE_UV) { image1 = image; stride1 = stride; }
+				if (opts->flags & JPEGQS_UPSAMPLE_UV) { image1 = image; stride1 = stride; }
 			} else { image2 = image; break; }
 			w = compptr[1].width_in_blocks * DCTSIZE;
 			h = compptr[1].height_in_blocks * DCTSIZE;
@@ -912,7 +927,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 	}
 
 #ifdef WITH_LOG
-	if (flags & JPEGQS_INFO_TIME) {
+	if (opts->info & JPEGQS_INFO_TIME) {
 		time = get_time_usec() - time;
 		logfmt("quantsmooth: %.3fms\n", time * 0.001);
 	}
@@ -928,8 +943,12 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 		if (qtbl) for (i = 0; i < DCTSIZE2; i++) qtbl->quantval[i] = 1;
 	}
 
+#ifdef _OPENMP
+	if (old_threads > 0) omp_set_num_threads(old_threads);
+#endif
+
 #ifndef TRANSCODE_ONLY
-	if (!(flags & JPEGQS_TRANSCODE)) {
+	if (!(opts->flags & JPEGQS_TRANSCODE)) {
 		// things needed for jpeg_read_scanlines() to work correctly
 		if (image1) {
 #ifdef LIBJPEG_TURBO_VERSION
@@ -948,9 +967,8 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *src_coef_ar
 
 #if !defined(TRANSCODE_ONLY) && !defined(NO_HELPERS)
 JPEGQS_ATTR
-boolean jpegqs_start_decompress(j_decompress_ptr cinfo, int32_t control) {
-	boolean ret; int32_t use_jpeqqs = control &
-			((JPEGQS_ITER_MAX << JPEGQS_ITER_SHIFT) | JPEGQS_UPSAMPLE_UV);
+boolean jpegqs_start_decompress(j_decompress_ptr cinfo, jpegqs_control_t *opts) {
+	boolean ret; int use_jpeqqs = opts->niter > 0 || opts->flags & JPEGQS_UPSAMPLE_UV;
 	if (use_jpeqqs) cinfo->buffered_image = TRUE;
 	ret = jpeg_start_decompress(cinfo);
 	if (use_jpeqqs) {
@@ -958,7 +976,7 @@ boolean jpegqs_start_decompress(j_decompress_ptr cinfo, int32_t control) {
 			jpeg_start_output(cinfo, cinfo->input_scan_number);
 			jpeg_finish_output(cinfo);
 		}
-		do_quantsmooth(cinfo, jpeg_read_coefficients(cinfo), control);
+		do_quantsmooth(cinfo, jpeg_read_coefficients(cinfo), opts);
 		jpeg_start_output(cinfo, cinfo->input_scan_number);
 	}
 	return ret;

@@ -87,24 +87,15 @@ static inline void gomp_init_num_threads() {
 }
 
 #ifdef _WIN32
-
-static DWORD omp_tls = TLS_OUT_OF_INDEXES;
 static CRITICAL_SECTION CriticalSection;
+#define MUTEX_INIT InitializeCriticalSection(&CriticalSection);
+#define MUTEX_FREE DeleteCriticalSection(&CriticalSection);
+#endif
 
-__attribute__((constructor))
-static void miniomp_init() {
-	// LOG("miniomp_init\n");
-	omp_tls = TlsAlloc();
-	InitializeCriticalSection(&CriticalSection);
-	gomp_init_num_threads();
-}
-
-__attribute__((destructor))
-static void miniomp_deinit() {
-	// LOG("miniomp_deinit\n");
-	DeleteCriticalSection(&CriticalSection);
-	if (omp_tls != TLS_OUT_OF_INDEXES) TlsFree(omp_tls);
-}
+#if 1 && defined(_WIN32)
+static DWORD omp_tls = TLS_OUT_OF_INDEXES;
+#define TLS_INIT omp_tls = TlsAlloc();
+#define TLS_FREE if (omp_tls != TLS_OUT_OF_INDEXES) TlsFree(omp_tls);
 
 static inline gomp_thread_t *miniomp_gettls() {
 	void *data = NULL;
@@ -123,20 +114,32 @@ static inline void miniomp_settls(gomp_thread_t *data) {
 
 static __thread gomp_thread_t *gomp_ptr = &gomp_thread_default;
 
+#define TLS_SET(x) gomp_ptr = x;
+#define TLS_GET gomp_ptr
+#endif
+
 __attribute__((constructor))
 static void miniomp_init() {
 	// LOG("miniomp_init()\n");
+#ifdef TLS_INIT
+	TLS_INIT
+#endif
+#ifdef MUTEX_INIT
+	MUTEX_INIT
+#endif
 	gomp_init_num_threads();
 }
 
 __attribute__((destructor))
 static void miniomp_deinit() {
 	// LOG("miniomp_deinit()\n");
-}
-
-#define TLS_SET(x) gomp_ptr = x;
-#define TLS_GET gomp_ptr
+#ifdef MUTEX_FREE
+	MUTEX_FREE
 #endif
+#ifdef TLS_FREE
+	TLS_FREE
+#endif
+}
 
 static inline gomp_thread_t* gomp_thread() {
 	return TLS_GET;
