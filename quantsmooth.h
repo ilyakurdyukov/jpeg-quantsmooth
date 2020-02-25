@@ -612,6 +612,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	}
 }
 
+//#define PRECISE_PROGRESS
+
 #ifndef QS_NAME
 #define QS_NAME do_quantsmooth
 #endif
@@ -621,7 +623,12 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	jpeg_component_info *compptr;
 	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
 	int num_iter = opts->niter, old_threads = -1;
-	int prog_next = 0, prog_max = 0, stop = 0;
+	int prog_next = 0, prog_max = 0, prog_thr = 0, prog_prec = 20;
+#ifdef PRECISE_PROGRESS
+	volatile int stop = 0;
+#else
+	int stop = 0;
+#endif
 	jvirt_barray_ptr coef_up[2] = { NULL, NULL };
 
 #ifdef WITH_LOG
@@ -678,17 +685,19 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			compptr = srcinfo->comp_info + ci;
 			prog_max += compptr->height_in_blocks * compptr->v_samp_factor * num_iter;
 		}
+		prog_thr = (prog_max + prog_prec - 1) / prog_prec;
 	}
 
 	quantsmooth_init(opts->flags);
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		int extra_refresh = 0, num_iter2 = num_iter;
-		int prog_cur = prog_next;
+		int prog_cur = prog_next, prog_inc;
 		compptr = srcinfo->comp_info + ci;
 		comp_width = compptr->width_in_blocks;
 		comp_height = compptr->height_in_blocks;
-		prog_next += comp_height * compptr->v_samp_factor * num_iter;
+		prog_inc = compptr->v_samp_factor;
+		prog_next += comp_height * prog_inc * num_iter;
 		if (!(qtbl = compptr->quant_table)) continue;
 
 		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
@@ -776,18 +785,39 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
 						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 
+#ifdef PRECISE_PROGRESS
+				if (stop) continue;
+#endif
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JSAMPLE *p2 = image2 && opts->flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
 					JCOEFPTR coef = buffer[0][blk_x];
 					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, opts->flags);
 				}
+#ifdef PRECISE_PROGRESS
+				if (opts->progress) {
+					int cur = __sync_add_and_fetch(&prog_cur, prog_inc);
+					if (cur > prog_thr && omp_get_thread_num() == 0) {
+						cur = (int64_t)prog_prec * cur / prog_max;
+						prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
+						stop = opts->progress(opts->userdata, cur, prog_prec);
+					}
+				}
+#endif
 			}
 
+#ifdef PRECISE_PROGRESS
+			if (stop) break;
+#else
 			if (opts->progress) {
-				prog_cur += comp_height * compptr->v_samp_factor;
-				stop = opts->progress(opts->userdata, prog_cur, prog_max);
+				int cur = prog_cur += comp_height * prog_inc;
+				if (cur > prog_thr) {
+					cur = (int64_t)prog_prec * cur / prog_max;
+					prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
+					stop = opts->progress(opts->userdata, cur, prog_prec);
+				}
 				if (stop) break;
 			}
+#endif
 		} // iter
 
 		if (!stop && image1) {

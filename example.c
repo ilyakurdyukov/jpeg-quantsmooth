@@ -140,7 +140,8 @@ typedef struct {
 
 static int progress(void *data, int cur, int max) {
 	progress_data_t *prog = (progress_data_t*)data;
-	printf("%s%i%%", prog->init ? ", " : "progress: ", (int)((int64_t)100 * cur / max));
+	printf("%s%i%%", prog->init ? ", " : "progress: ", 100 * cur / max);
+	fflush(stdout);
 	prog->init = 1;
 	// return nonzero value to stop processing
 	return 0;

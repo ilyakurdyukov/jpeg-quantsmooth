@@ -200,7 +200,7 @@ int web_process(int64_t *params) {
 typedef struct { HWND hwnd; } progress_data_t;
 static int progress(void *data, int cur, int max) {
 	progress_data_t *prog = (progress_data_t*)data;
-	int percent = (int64_t)100 * cur / max;
+	int percent = 100 * cur / max;
 	PostMessage(prog->hwnd, WM_USER, (WPARAM)percent, 0);
 	return 0;
 }
