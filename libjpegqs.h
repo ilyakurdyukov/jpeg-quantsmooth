@@ -32,10 +32,12 @@ enum {
 
 typedef struct {
 	int info, flags, niter, threads;
+	void *userdata;
+	int (*progress)(void *data, int cur, int max);
 } jpegqs_control_t;
 
 JPEGQS_ATTR
-void do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts);
+int do_quantsmooth(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts);
 
 #ifndef TRANSCODE_ONLY
 JPEGQS_ATTR

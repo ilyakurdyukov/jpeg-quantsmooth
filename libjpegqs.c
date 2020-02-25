@@ -35,12 +35,8 @@
 
 #define QS_ARGS (j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts)
 
-#define M1(name) void do_quantsmooth_##name QS_ARGS;
-M1(avx2)
-#ifndef __x86_64__
-M1(sse2)
-#endif
-M1(base)
+#define M1(name) int do_quantsmooth_##name QS_ARGS;
+M1(avx2) M1(sse2) M1(base)
 #undef M1
 
 #ifdef _MSC_VER
@@ -54,7 +50,7 @@ static inline void get_cpuid(int32_t a, int32_t c, int32_t out[4]) {
 }
 #endif
 
-JPEGQS_ATTR void do_quantsmooth QS_ARGS {
+JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 	int32_t cpuid[4], m; int type = 0;
 	get_cpuid(0, 0, cpuid); m = cpuid[0];
 	do {
@@ -69,14 +65,12 @@ JPEGQS_ATTR void do_quantsmooth QS_ARGS {
 		type = 2;
 	} while (0);
 
-#define M1(name) do_quantsmooth_##name(srcinfo, coef_arrays, opts); break;
-	switch (type) {
-		case 2: M1(avx2)
+#define M1(name) return do_quantsmooth_##name(srcinfo, coef_arrays, opts);
+	if (type == 2) M1(avx2)
 #ifndef __x86_64__
-		case 1: M1(sse2)
+	if (type == 1) M1(sse2)
 #endif
-		default: M1(base)
-	}
+	M1(base)
 #undef M1
 }
 #else

@@ -615,12 +615,14 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #ifndef QS_NAME
 #define QS_NAME do_quantsmooth
 #endif
-JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts) {
+JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts) {
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
 	jpeg_component_info *compptr;
 	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
 	int num_iter = opts->niter, old_threads = -1;
+	int prog_next = 0, prog_max = 0, stop = 0;
+	jvirt_barray_ptr coef_up[2] = { NULL, NULL };
 
 #ifdef WITH_LOG
 	int64_t time = 0;
@@ -661,7 +663,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 	if (num_iter < 0) num_iter = 0;
 	if (num_iter > JPEGQS_ITER_MAX) num_iter = JPEGQS_ITER_MAX;
 
-	if (num_iter <= 0 && !(opts->flags & JPEGQS_UPSAMPLE_UV && need_downsample)) return;
+	if (num_iter <= 0 && !(opts->flags & JPEGQS_UPSAMPLE_UV && need_downsample)) return 0;
 
 	(void)old_threads;
 #ifdef _OPENMP
@@ -671,13 +673,22 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 	}
 #endif
 
+	if (opts->progress) {
+		for (ci = 0; ci < srcinfo->num_components; ci++) {
+			compptr = srcinfo->comp_info + ci;
+			prog_max += compptr->height_in_blocks * compptr->v_samp_factor * num_iter;
+		}
+	}
+
 	quantsmooth_init(opts->flags);
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
 		int extra_refresh = 0, num_iter2 = num_iter;
+		int prog_cur = prog_next;
 		compptr = srcinfo->comp_info + ci;
 		comp_width = compptr->width_in_blocks;
 		comp_height = compptr->height_in_blocks;
+		prog_next += comp_height * compptr->v_samp_factor * num_iter;
 		if (!(qtbl = compptr->quant_table)) continue;
 
 		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
@@ -690,11 +701,28 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 		}
 
 		if (num_iter2 + extra_refresh == 0) continue;
+		image = NULL;
+		if (!stop) {
+			// keeping block pointers aligned
+			stride = comp_width * DCTSIZE + 8;
+			image = (JSAMPROW)malloc(((comp_height * DCTSIZE + 2) * stride + 8) * sizeof(JSAMPLE));
+		}
+		if (!image) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+			for (blk_y = 0; blk_y < comp_height; blk_y++) {
+				JDIMENSION blk_x;
+				JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
 
-		// keeping block pointers aligned
-		stride = comp_width * DCTSIZE + 8;
-		image = (JSAMPROW)malloc(((comp_height * DCTSIZE + 2) * stride + 8) * sizeof(JSAMPLE));
-		if (!image) continue;
+				for (blk_x = 0; blk_x < comp_width; blk_x++) {
+					JCOEFPTR coef = buffer[0][blk_x]; int i;
+					for (i = 0; i < DCTSIZE2; i++) coef[i] *= qtbl->quantval[i];
+				}
+			}
+			continue;
+		}
 		image += 7;
 
 #ifdef WITH_LOG
@@ -754,9 +782,15 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, opts->flags);
 				}
 			}
+
+			if (opts->progress) {
+				prog_cur += comp_height * compptr->v_samp_factor;
+				stop = opts->progress(opts->userdata, prog_cur, prog_max);
+				if (stop) break;
+			}
 		} // iter
 
-		if (image1) {
+		if (!stop && image1) {
 			JSAMPLE *mem; int st, w1, h1, ws, hs;
 			compptr = srcinfo->comp_info;
 			ws = compptr[0].h_samp_factor;
@@ -765,10 +799,8 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 			h1 = (srcinfo->image_height + hs - 1) / hs;
 			comp_width = compptr[0].width_in_blocks;
 			comp_height = compptr[0].height_in_blocks;
-			compptr[ci].width_in_blocks = comp_width;
-			compptr[ci].height_in_blocks = comp_height;
 
-			coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
+			coef_up[ci - 1] = (*srcinfo->mem->request_virt_barray)
 					((j_common_ptr)srcinfo, JPOOL_IMAGE, FALSE, comp_width, comp_height, 1);
 			(*srcinfo->mem->realize_virt_arrays) ((j_common_ptr)srcinfo);
 
@@ -776,7 +808,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 			// need to suppress JERR_BAD_VIRTUAL_ACCESS
 			for (blk_y = 0; blk_y < comp_height; blk_y++) {
 				(*srcinfo->mem->access_virt_barray)
-						((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
+						((j_common_ptr)srcinfo, coef_up[ci - 1], blk_y, 1, TRUE);
 			}
 #endif
 
@@ -836,7 +868,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 				for (blk_y = 0; blk_y < comp_height; blk_y++) {
 					JDIMENSION blk_x;
 					JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
-							((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
+							((j_common_ptr)srcinfo, coef_up[ci - 1], blk_y, 1, TRUE);
 
 					for (blk_x = 0; blk_x < comp_width; blk_x++) {
 						float ALIGN(32) buf[DCTSIZE2]; int x, y, n = DCTSIZE;
@@ -851,7 +883,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 				}
 				free(mem);
 			}
-		} else if (!ci && need_downsample) do {
+		} else if (!stop && !ci && need_downsample) do {
 			// make downsampled copy of Y component
 			int y, w, h, w1, h1, st, ws, hs;
 
@@ -917,21 +949,34 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 		if (image != image1 && image != image2) free(image - 7);
 	}
 
-	if (image2 != image1 && image2) free(image2 - 7);
-	if (image1) {
-		srcinfo->max_h_samp_factor = 1;
-		srcinfo->max_v_samp_factor = 1;
-		srcinfo->comp_info[0].h_samp_factor = 1;
-		srcinfo->comp_info[0].v_samp_factor = 1;
-		free(image1 - 7);
-	}
-
 #ifdef WITH_LOG
-	if (opts->info & JPEGQS_INFO_TIME) {
+	if (!stop && opts->info & JPEGQS_INFO_TIME) {
 		time = get_time_usec() - time;
 		logfmt("quantsmooth: %.3fms\n", time * 0.001);
 	}
 #endif
+
+#ifdef _OPENMP
+	if (old_threads > 0) omp_set_num_threads(old_threads);
+#endif
+
+	if (image2 != image1 && image2) free(image2 - 7);
+	if (image1) free(image1 - 7);
+	if (stop) image1 = NULL;
+	if (image1) {
+		srcinfo->max_h_samp_factor = 1;
+		srcinfo->max_v_samp_factor = 1;
+		compptr = srcinfo->comp_info;
+		compptr[0].h_samp_factor = 1;
+		compptr[0].v_samp_factor = 1;
+		comp_width = compptr[0].width_in_blocks;
+		comp_height = compptr[0].height_in_blocks;
+#define M1(i) coef_arrays[i] = coef_up[i - 1]; \
+	compptr[i].width_in_blocks = comp_width; \
+	compptr[i].height_in_blocks = comp_height;
+		M1(1) M1(2)
+#undef M1
+	}
 
 	for (ci = 0; ci < NUM_QUANT_TBLS; ci++) {
 		qtbl = srcinfo->quant_tbl_ptrs[ci];
@@ -942,10 +987,6 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 		qtbl = srcinfo->comp_info[ci].quant_table;
 		if (qtbl) for (i = 0; i < DCTSIZE2; i++) qtbl->quantval[i] = 1;
 	}
-
-#ifdef _OPENMP
-	if (old_threads > 0) omp_set_num_threads(old_threads);
-#endif
 
 #ifndef TRANSCODE_ONLY
 	if (!(opts->flags & JPEGQS_TRANSCODE)) {
@@ -963,6 +1004,7 @@ JPEGQS_ATTR void QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays
 		jinit_inverse_dct(srcinfo);
 	}
 #endif
+	return stop;
 }
 
 #if !defined(TRANSCODE_ONLY) && !defined(NO_HELPERS)

@@ -134,9 +134,22 @@ bitmap_t* bitmap_read_jpeg(const char *filename, jpegqs_control_t *opts) {
 	return bm;
 }
 
+typedef struct {
+	int init;
+} progress_data_t;
+
+static int progress(void *data, int cur, int max) {
+	progress_data_t *prog = (progress_data_t*)data;
+	printf("%s%i%%", prog->init ? ", " : "progress: ", (int)((int64_t)100 * cur / max));
+	prog->init = 1;
+	// return nonzero value to stop processing
+	return 0;
+}
+
 int main(int argc, char **argv) {
 	bitmap_t *bm; const char *ifn, *ofn;
 	jpegqs_control_t opts;
+	progress_data_t prog;
 
 	if (argc != 3) {
 		printf("Usage: example input.jpg output.bmp\n");
@@ -149,8 +162,12 @@ int main(int argc, char **argv) {
 	opts.flags |= JPEGQS_DIAGONALS; /* -q4 */
 	opts.flags |= JPEGQS_JOINT_YUV; /* -q5 */
 	opts.flags |= JPEGQS_UPSAMPLE_UV; /* -q6 */
+	prog.init = 0;
+	opts.userdata = &prog;
+	opts.progress = progress;
 
 	bm = bitmap_read_jpeg(ifn, &opts);
+	if (prog.init) printf("\n");
 	if (bm) {
 		FILE *f;
 		int w = bm->width, h = bm->height, st = bm->stride;
