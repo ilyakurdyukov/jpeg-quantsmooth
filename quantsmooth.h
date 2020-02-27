@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Kurdyukov Ilya
+ * Copyright (C) 2016-2020 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth
  *
@@ -26,6 +26,8 @@
 
 #ifdef _OPENMP
 #include <omp.h>
+#else
+#define omp_get_thread_num() 0
 #endif
 
 #if !defined(TRANSCODE_ONLY) && !defined(JPEG_INTERNALS)
@@ -798,7 +800,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 #ifdef PRECISE_PROGRESS
 				if (opts->progress) {
 					int cur = __sync_add_and_fetch(&prog_cur, prog_inc);
-					if (cur > prog_thr && omp_get_thread_num() == 0) {
+					if (cur >= prog_thr && omp_get_thread_num() == 0) {
 						cur = (int64_t)prog_prec * cur / prog_max;
 						prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
 						stop = opts->progress(opts->userdata, cur, prog_prec);
@@ -812,7 +814,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 #else
 			if (opts->progress) {
 				int cur = prog_cur += comp_height * prog_inc;
-				if (cur > prog_thr) {
+				if (cur >= prog_thr) {
 					cur = (int64_t)prog_prec * cur / prog_max;
 					prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
 					stop = opts->progress(opts->userdata, cur, prog_prec);

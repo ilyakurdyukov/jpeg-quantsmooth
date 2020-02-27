@@ -1,7 +1,30 @@
 /*
- * Copyright (C) 2020 Kurdyukov Ilya
- *
  * Lightweight replacement of libgomp with basic OpenMP functionality.
+ * Copyright (C) 2020 Ilya Kurdyukov
+ *
+ * contains modified parts of libgomp:
+ *
+ * Copyright (C) 2005-2018 Free Software Foundation, Inc.
+ * Contributed by Richard Henderson <rth@redhat.com>.
+
+ * Libgomp is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * Libgomp is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * Under Section 7 of GPL version 3, you are granted additional
+ * permissions described in the GCC Runtime Library Exception, version
+ * 3.1, as published by the Free Software Foundation.
+ *
+ * You should have received a copy of the GNU General Public License and
+ * a copy of the GCC Runtime Library Exception along with this program;
+ * see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
+ * <http://www.gnu.org/licenses/>.
  */
 
 #include <stdlib.h>
@@ -16,7 +39,8 @@
 #define HIDDEN __attribute__((visibility("hidden")))
 #endif
 
-#define LOG(...) fprintf(stderr, __VA_ARGS__)
+#define LOG0(...)
+#define LOG(...) { fprintf(stderr, __VA_ARGS__); fflush(stderr); }
 
 #ifndef MAX_THREADS
 #define MAX_THREADS 16
@@ -33,44 +57,44 @@ typedef char bool;
 #define THREAD_RET return 0;
 
 #define THREAD_FIELDS HANDLE handle;
-#define THREAD_INIT(t) t.handle = NULL;
-#define THREAD_CREATE(t) { DWORD tid; t.handle = CreateThread(NULL, 0, gomp_threadfunc, (void*)&t, 0, &tid); }
-#define THREAD_JOIN(t) if (t.handle) { WaitForSingleObject(t.handle, INFINITE); CloseHandle(t.handle); }
+#define THREAD_INIT(t) t.impl.handle = NULL;
+#define THREAD_CREATE(t) { DWORD tid; t.impl.handle = CreateThread(NULL, 0, gomp_threadfunc, (void*)&t, 0, &tid); }
+#define THREAD_JOIN(t) if (t.impl.handle) { WaitForSingleObject(t.impl.handle, INFINITE); CloseHandle(t.impl.handle); }
 #else
 #include <pthread.h>
 #define THREAD_CALLBACK(name) void* name(void* param)
 #define THREAD_RET return NULL;
 
 #define THREAD_FIELDS int err; pthread_t pthread;
-#define THREAD_INIT(t) t.err = -1;
-#define THREAD_CREATE(t) t.err = pthread_create(&t.pthread, NULL, gomp_threadfunc, (void*)&t);
-#define THREAD_JOIN(t) if (!t.err) pthread_join(t.pthread, NULL);
+#define THREAD_INIT(t) t.impl.err = -1;
+#define THREAD_CREATE(t) t.impl.err = pthread_create(&t.impl.pthread, NULL, gomp_threadfunc, (void*)&t);
+#define THREAD_JOIN(t) if (!t.impl.err) pthread_join(t.impl.pthread, NULL);
 #endif
 
 typedef unsigned long long gomp_ull;
 
 typedef struct {
-	void (*fn) (void *);
+	void (*fn)(void*);
 	void *data;
-	unsigned num_threads;
-	union { long next; gomp_ull ull_next; };
-	union { long end; gomp_ull ull_end; };
-	union { long incr; gomp_ull ull_incr; };
-	union { long chunk_size; gomp_ull ull_chunk_size; };
+	unsigned nthreads;
+	volatile int wait; // waiting threads
+	volatile char lock;
+	char mode;
+	union { volatile gomp_ull next_ull; volatile long next; };
+	union { gomp_ull end_ull; long end; };
+	union { gomp_ull chunk_ull; long chunk; };
 } gomp_work_t;
 
 typedef struct {
-	struct {
-		int team_id;
-		gomp_work_t *work_share;
-	} ts;
-	THREAD_FIELDS
+	int team_id;
+	gomp_work_t *work_share;
+	struct { THREAD_FIELDS } impl;
 } gomp_thread_t;
 
-static int nthreads_var = MAX_THREADS;
-static int num_procs = MAX_THREADS;
+static int nthreads_var = 1, num_procs = 1;
 
-static gomp_thread_t gomp_thread_default = { 0 };
+static gomp_work_t gomp_work_default = { NULL, NULL, 1, -1, 0, 0, { 0 }, { 0 }, { 0 } };
+static gomp_thread_t gomp_thread_default = { 0, &gomp_work_default, { 0 } };
 
 static inline void gomp_init_num_threads() {
 #ifdef _WIN32
@@ -87,9 +111,33 @@ static inline void gomp_init_num_threads() {
 }
 
 #ifdef _WIN32
-static CRITICAL_SECTION CriticalSection;
-#define MUTEX_INIT InitializeCriticalSection(&CriticalSection);
-#define MUTEX_FREE DeleteCriticalSection(&CriticalSection);
+typedef CRITICAL_SECTION gomp_mutex_t;
+static gomp_mutex_t default_lock;
+static gomp_mutex_t barrier_lock;
+#define MUTEX_INIT(lock) InitializeCriticalSection(lock);
+#define MUTEX_FREE(lock) DeleteCriticalSection(lock);
+
+static void gomp_mutex_lock(gomp_mutex_t *lock) {
+	EnterCriticalSection(lock);
+}
+
+static void gomp_mutex_unlock(gomp_mutex_t *lock) {
+	LeaveCriticalSection(lock);
+}
+#else
+typedef pthread_mutex_t gomp_mutex_t;
+static gomp_mutex_t default_lock = PTHREAD_MUTEX_INITIALIZER;
+static gomp_mutex_t barrier_lock = PTHREAD_MUTEX_INITIALIZER;
+// #define MUTEX_INIT(lock) pthread_mutex_init(lock, NULL)
+// #define MUTEX_FREE(lock) pthread_mutex_destroy(lock)
+
+static void gomp_mutex_lock(gomp_mutex_t *lock) {
+	pthread_mutex_lock(lock);
+}
+
+static void gomp_mutex_unlock(gomp_mutex_t *lock) {
+	pthread_mutex_unlock(lock);
+}
 #endif
 
 #if 1 && defined(_WIN32)
@@ -100,8 +148,7 @@ static DWORD omp_tls = TLS_OUT_OF_INDEXES;
 static inline gomp_thread_t *miniomp_gettls() {
 	void *data = NULL;
 	if (omp_tls != TLS_OUT_OF_INDEXES) data = TlsGetValue(omp_tls);
-	if (!data) data = &gomp_thread_default;
-	return (gomp_thread_t*)data;
+	return data ? (gomp_thread_t*)data : &gomp_thread_default;
 }
 
 static inline void miniomp_settls(gomp_thread_t *data) {
@@ -125,7 +172,8 @@ static void miniomp_init() {
 	TLS_INIT
 #endif
 #ifdef MUTEX_INIT
-	MUTEX_INIT
+	MUTEX_INIT(&default_lock)
+	MUTEX_INIT(&barrier_lock)
 #endif
 	gomp_init_num_threads();
 }
@@ -134,77 +182,65 @@ __attribute__((destructor))
 static void miniomp_deinit() {
 	// LOG("miniomp_deinit()\n");
 #ifdef MUTEX_FREE
-	MUTEX_FREE
+	MUTEX_FREE(&barrier_lock)
+	MUTEX_FREE(&default_lock)
 #endif
 #ifdef TLS_FREE
 	TLS_FREE
 #endif
 }
 
-static inline gomp_thread_t* gomp_thread() {
-	return TLS_GET;
-}
+static inline gomp_thread_t* gomp_thread() { return TLS_GET; }
+HIDDEN int omp_get_thread_num() { return gomp_thread()->team_id; }
+HIDDEN int omp_get_num_procs() { return num_procs; }
+HIDDEN int omp_get_max_threads() { return nthreads_var; }
+HIDDEN int omp_get_num_threads() { return gomp_thread()->work_share->nthreads; }
+HIDDEN void omp_set_num_threads(int n) { nthreads_var = n > 0 ? n : 1; }
 
-HIDDEN int omp_get_thread_num(void) {
-	return gomp_thread()->ts.team_id;
-}
+// need for ULL loops with negative increment ending at zero
+// and some other extreme cases
+#ifndef OVERFLOW_CHECKS
+#define OVERFLOW_CHECKS 1
+#endif
 
-HIDDEN int omp_get_num_procs(void) {
-	return num_procs;
+#define DYN_NEXT(name, type, next, chunk1, end1) \
+static bool gomp_iter_##name(gomp_thread_t *thr, type *pstart, type *pend) { \
+	gomp_work_t *ws = thr->work_share; char mode = ws->mode; \
+	type end = ws->end1, nend, chunk = ws->chunk1, start; \
+	if (!OVERFLOW_CHECKS || mode & 1) { \
+		start = __sync_fetch_and_add(&ws->next, chunk); \
+		if (!(mode & 2)) { \
+			if (start >= end) return false; \
+			nend = start + chunk; \
+			if (nend > end) nend = end; \
+		} else { \
+			if (start <= end) return false; \
+			nend = start + chunk; \
+			if (nend < end) nend = end; \
+		} \
+	} else { \
+		start = ws->next; \
+		for (;;) { \
+			type left = end - start, tmp; \
+			if (!left) return false; \
+			if (mode & 2) { if (chunk < left) chunk = left; } \
+			else if (chunk > left) chunk = left;  \
+			nend = start + chunk; \
+			tmp = __sync_val_compare_and_swap(&ws->next, start, nend); \
+			if (tmp == start) break; \
+			start = tmp; \
+		} \
+	} \
+	*pstart = start; *pend = nend; return true; \
 }
-
-HIDDEN int omp_get_max_threads(void) {
-	return nthreads_var;
-}
-
-HIDDEN void omp_set_num_threads(int n) {
-	nthreads_var = n > 0 ? n : 1;
-}
-
-static bool gomp_iter_dynamic_next(long *pstart, long *pend) {
-	gomp_thread_t *thr = gomp_thread();
-	gomp_work_t *ws = thr->ts.work_share;
-	long end = ws->end, nend, chunk = ws->chunk_size, incr = ws->incr;
-	long tmp = __sync_fetch_and_add(&ws->next, chunk);
-	if (incr > 0) {
-		if (tmp >= end) return false;
-		nend = tmp + chunk;
-		if (nend > end) nend = end;
-	} else {
-		if (tmp <= end) return false;
-		nend = tmp + chunk;
-		if (nend < end) nend = end;
-	}
-	*pstart = tmp;
-	*pend = nend;
-	return true;
-}
-
-static bool gomp_iter_ull_dynamic_next(gomp_ull *pstart, gomp_ull *pend) {
-	gomp_thread_t *thr = gomp_thread();
-	gomp_work_t *ws = thr->ts.work_share;
-	gomp_ull end = ws->ull_end, nend, chunk = ws->ull_chunk_size, incr = ws->ull_incr;
-	gomp_ull tmp = __sync_fetch_and_add(&ws->ull_next, chunk);
-	if (incr > 0) {
-		if (tmp >= end) return false;
-		nend = tmp + chunk;
-		if (nend > end) nend = end;
-	} else {
-		if (tmp <= end) return false;
-		nend = tmp + chunk;
-		if (nend < end) nend = end;
-	}
-	*pstart = tmp;
-	*pend = nend;
-	return true;
-}
+DYN_NEXT(dynamic_next, long, next, chunk, end)
+DYN_NEXT(ull_dynamic_next, gomp_ull, next_ull, chunk_ull, end_ull)
+#undef DYN_NEXT
 
 static THREAD_CALLBACK(gomp_threadfunc) {
 	gomp_thread_t *thr = (gomp_thread_t*)param;
-	gomp_work_t *ws = thr->ts.work_share;
-
-	TLS_SET((gomp_thread_t*)param)
-
+	gomp_work_t *ws = thr->work_share;
+	TLS_SET(thr)
 	ws->fn(ws->data);
 	THREAD_RET
 }
@@ -212,141 +248,134 @@ static THREAD_CALLBACK(gomp_threadfunc) {
 #if 0
 #include <alloca.h>
 #define THREADS_DEFINE gomp_thread_t *threads;
-#define THREADS_ALLOC threads = (gomp_thread_t*)alloca(num_threads * sizeof(gomp_thread_t));
+#define THREADS_ALLOC threads = (gomp_thread_t*)alloca(nthreads * sizeof(gomp_thread_t));
 #else
 #define THREADS_DEFINE gomp_thread_t threads[MAX_THREADS];
 #define THREADS_ALLOC
 #endif
 
-#define GOMP_TEAM_INIT \
-	gomp_work_t ws; \
-	THREADS_DEFINE \
+#define TEAM_INIT \
+	LOG0("parallel: fn = %p, data = %p, nthreads = %u, flags = %u\n", fn, data, nthreads, flags) \
+	gomp_work_t ws; THREADS_DEFINE \
 	ws.fn = fn; ws.data = data; \
-	if (num_threads <= 0) num_threads = nthreads_var; \
-	if (num_threads > MAX_THREADS) num_threads = MAX_THREADS; \
+	if (nthreads <= 0) nthreads = nthreads_var; \
+	if (nthreads > MAX_THREADS) nthreads = MAX_THREADS; \
+	ws.nthreads = nthreads; ws.wait = -1; \
 	THREADS_ALLOC \
-	for (unsigned i = 0; i < num_threads; i++) { \
+	for (unsigned i = 0; i < nthreads; i++) { \
 		THREAD_INIT(threads[i]) \
-		threads[i].ts.team_id = i; \
-		threads[i].ts.work_share = &ws; \
+		threads[i].team_id = i; \
+		threads[i].work_share = &ws; \
 	} \
 	TLS_SET(threads)
 
-#define GOMP_TEAM_START(ws) \
-	ws.num_threads = 0; \
-	ws.next = start; ws.end = end; ws.incr = incr; \
-	ws.chunk_size = chunk_size * incr; \
-	for (unsigned i = 1; i < num_threads; i++) THREAD_CREATE(threads[i])
-
-#define GOMP_TEAM_ULL_START(ws) \
-	(void)up; /* TODO */ \
-	ws.num_threads = 0; \
-	ws.ull_next = start; ws.ull_end = end; ws.ull_incr = incr; \
-	ws.ull_chunk_size = chunk_size * incr; \
-	for (unsigned i = 1; i < num_threads; i++) THREAD_CREATE(threads[i])
-
-#define GOMP_TEAM_END \
-	for (unsigned i = 1; i < num_threads; i++) THREAD_JOIN(threads[i]) \
+#define TEAM_START(ws) \
+	for (unsigned i = 1; i < nthreads; i++) THREAD_CREATE(threads[i]) \
+	fn(data); \
+	for (unsigned i = 1; i < nthreads; i++) THREAD_JOIN(threads[i]) \
 	TLS_SET(&gomp_thread_default)
 
-HIDDEN void GOMP_parallel_loop_dynamic(void (*fn) (void *), void *data,
-			unsigned num_threads, long start, long end,
-			long incr, long chunk_size, unsigned flags) {
+#define LOOP_START(INIT) gomp_thread_t *thr = gomp_thread(); \
+	gomp_work_t *ws = thr->work_share; unsigned nthreads = ws->nthreads; \
+	{ char l; do l = __sync_val_compare_and_swap(&ws->lock, 0, 1); \
+	while (l == 1); if (!l) { LOOP_##INIT((*ws)) ws->lock = 2; } }
+
+#define LOOP_INIT(ws) ws.mode = incr >= 0 ? 0 : 2; \
+	LOG0("loop_start: start = %li, end = %li, incr = %li, chunk = %li\n", start, end, incr, chunk) \
+	end = (incr >= 0 && start > end) || (incr < 0 && start < end) ? start : end; \
+	ws.next = start; ws.end = end; ws.chunk = chunk *= incr; \
+	if (OVERFLOW_CHECKS) { chunk = (~0UL >> 1) - chunk * (nthreads + 1); \
+		ws.mode |= incr >= 0 ? end <= chunk : end >= chunk; }
+
+#define LOOP_ULL_INIT(ws) ws.mode = up ? 0 : 2; \
+	LOG0("loop_ull_start: up = %i, start = %llu, end = %llu, incr = %lli, chunk = %llu\n", up, start, end, incr, chunk) \
+	end = (up && start > end) || (!up && start < end) ? start : end; \
+	ws.next_ull = start; ws.end_ull = end; ws.chunk_ull = chunk *= incr; \
+	if (OVERFLOW_CHECKS) { chunk = -1 - chunk * (nthreads + 1); \
+		ws.mode |= up ? end <= chunk : end >= chunk; }
+
+// up ? end <= fe00 : end >= 0200-1
+
+#define TEAM_ARGS void (*fn)(void*), void *data, unsigned nthreads
+#define LOOP_ARGS(t) t start, t end, t incr, t chunk
+
+HIDDEN void GOMP_parallel(TEAM_ARGS, unsigned flags) {
 	(void)flags;
-	// LOG("parallel: fn = %p, data = %p, num_threads = %u, flags = %u\n", fn, data, num_threads, flags);
-	// LOG("loop_start: start = %li, end = %li, incr = %li, chunk_size = %li\n", start, end, incr, chunk_size);
-	GOMP_TEAM_INIT
-	GOMP_TEAM_START(ws)
-	fn(data);
-	GOMP_TEAM_END
+	TEAM_INIT ws.lock = 0;
+	TEAM_START(ws)
 }
 
-HIDDEN bool GOMP_loop_dynamic_start(long start, long end, long incr, long chunk_size,
-			 long *istart, long *iend) {
-	gomp_thread_t *threads = TLS_GET;
-	gomp_work_t *ws = threads->ts.work_share;
-	unsigned num_threads = ws->num_threads;
-	if (num_threads) {
-		// LOG("loop_start: start = %li, end = %li, incr = %li, chunk_size = %li\n", start, end, incr, chunk_size);
-		GOMP_TEAM_START((*ws))
-	}
-	return gomp_iter_dynamic_next(istart, iend);
-}
-
-HIDDEN bool GOMP_loop_ull_dynamic_start(bool up, gomp_ull start, gomp_ull end, gomp_ull incr, gomp_ull chunk_size,
-			 gomp_ull *istart, gomp_ull *iend) {
-	gomp_thread_t *threads = TLS_GET;
-	gomp_work_t *ws = threads->ts.work_share;
-	unsigned num_threads = ws->num_threads;
-	if (num_threads) {
-		// LOG("loop_ull_start: up = %i, start = %llu, end = %llu, incr = %llu, chunk_size = %llu\n", up, start, end, incr, chunk_size);
-		GOMP_TEAM_ULL_START((*ws))
-	}
-	return gomp_iter_ull_dynamic_next(istart, iend);
-}
-
-HIDDEN void GOMP_parallel(void (*fn) (void *), void *data, unsigned num_threads, unsigned flags) {
+HIDDEN void GOMP_parallel_loop_dynamic(TEAM_ARGS, LOOP_ARGS(long), unsigned flags) {
 	(void)flags;
-	// LOG("parallel: fn = %p, data = %p, num_threads = %u, flags = %u\n", fn, data, num_threads, flags);
-	GOMP_TEAM_INIT
-	ws.num_threads = num_threads;
-	fn(data);
-	GOMP_TEAM_END
+	TEAM_INIT LOOP_INIT(ws) ws.lock = 2;
+	TEAM_START(ws)
+}
+
+HIDDEN bool GOMP_loop_dynamic_start(LOOP_ARGS(long), long *istart, long *iend) {
+	LOOP_START(INIT)
+	return gomp_iter_dynamic_next(thr, istart, iend);
+}
+
+HIDDEN bool GOMP_loop_ull_dynamic_start(bool up, LOOP_ARGS(gomp_ull), gomp_ull *istart, gomp_ull *iend) {
+	LOOP_START(ULL_INIT)
+	return gomp_iter_ull_dynamic_next(thr, istart, iend);
 }
 
 HIDDEN bool GOMP_loop_dynamic_next(long *istart, long *iend) {
 	// LOG("loop_dynamic_next: istart = %p, iend = %p\n", istart, iend);
-	return gomp_iter_dynamic_next(istart, iend);
+	return gomp_iter_dynamic_next(gomp_thread(), istart, iend);
 }
 
 HIDDEN bool GOMP_loop_ull_dynamic_next(gomp_ull *istart, gomp_ull *iend) {
 	// LOG("loop_ull_dynamic_next: istart = %p, iend = %p\n", istart, iend);
-	return gomp_iter_ull_dynamic_next(istart, iend);
+	return gomp_iter_ull_dynamic_next(gomp_thread(), istart, iend);
 }
 
-HIDDEN void GOMP_loop_end_nowait(void) {
+HIDDEN void GOMP_loop_end_nowait() {
 	// LOG("loop_end_nowait\n");
 }
 
+static void miniomp_barrier(int loop_end) {
+	gomp_thread_t *thr = gomp_thread();
+	gomp_work_t *ws = thr->work_share;
+	int i, nthreads = ws->nthreads;
+	if (nthreads == 1) {
+		if (loop_end) ws->lock = 0;
+		return;
+	}
+	// LOG("barrier: team_id = %i\n", thr->team_id);
+	do i = __sync_val_compare_and_swap(&ws->wait, -1, 0); while (!i);
+	if (i == -1) gomp_mutex_lock(&barrier_lock);
+	i = __sync_add_and_fetch(&ws->wait, 1);
+	if (i < nthreads) gomp_mutex_lock(&barrier_lock);
+	else {
+		if (loop_end) ws->lock = 0;
+		ws->wait = -1;
+	}
+	gomp_mutex_unlock(&barrier_lock);
+}
+
+HIDDEN void GOMP_barrier() { miniomp_barrier(0); }
+HIDDEN void GOMP_loop_end() { miniomp_barrier(1); }
+
 #define M1(fn, copy) extern __typeof(fn) copy __attribute__((alias(#fn)));
 M1(GOMP_parallel_loop_dynamic, GOMP_parallel_loop_guided)
+M1(GOMP_parallel_loop_dynamic, GOMP_parallel_loop_nonmonotonic_dynamic)
+M1(GOMP_parallel_loop_dynamic, GOMP_parallel_loop_nonmonotonic_guided)
 M1(GOMP_loop_dynamic_start, GOMP_loop_guided_start)
 M1(GOMP_loop_dynamic_next, GOMP_loop_guided_next)
 M1(GOMP_loop_dynamic_start, GOMP_loop_nonmonotonic_dynamic_start)
 M1(GOMP_loop_dynamic_next, GOMP_loop_nonmonotonic_dynamic_next)
+M1(GOMP_loop_dynamic_start, GOMP_loop_nonmonotonic_guided_start)
+M1(GOMP_loop_dynamic_next, GOMP_loop_nonmonotonic_guided_next)
+M1(GOMP_loop_ull_dynamic_start, GOMP_loop_ull_guided_start)
+M1(GOMP_loop_ull_dynamic_next, GOMP_loop_ull_guided_next)
 M1(GOMP_loop_ull_dynamic_start, GOMP_loop_ull_nonmonotonic_dynamic_start)
 M1(GOMP_loop_ull_dynamic_next, GOMP_loop_ull_nonmonotonic_dynamic_next)
+M1(GOMP_loop_ull_dynamic_start, GOMP_loop_ull_nonmonotonic_guided_start)
+M1(GOMP_loop_ull_dynamic_next, GOMP_loop_ull_nonmonotonic_guided_next)
 #undef M1
 
-#ifdef _WIN32
-typedef CRITICAL_SECTION gomp_mutex_t;
-#define default_lock CriticalSection
-
-static void gomp_mutex_lock(gomp_mutex_t *lock) {
-	EnterCriticalSection(lock);
-}
-
-static void gomp_mutex_unlock(gomp_mutex_t *lock) {
-	LeaveCriticalSection(lock);
-}
-#else
-typedef pthread_mutex_t gomp_mutex_t;
-static gomp_mutex_t default_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static void gomp_mutex_lock(gomp_mutex_t *lock) {
-	pthread_mutex_lock(lock);
-}
-
-static void gomp_mutex_unlock(gomp_mutex_t *lock) {
-	pthread_mutex_unlock(lock);
-}
-#endif
-
-HIDDEN void GOMP_critical_start(void) {
-	gomp_mutex_lock(&default_lock);
-}
-
-HIDDEN void GOMP_critical_end(void) {
-	gomp_mutex_unlock(&default_lock);
-}
+HIDDEN void GOMP_critical_start() { gomp_mutex_lock(&default_lock); }
+HIDDEN void GOMP_critical_end() { gomp_mutex_unlock(&default_lock); }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Kurdyukov Ilya
+ * Copyright (C) 2016-2020 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth (example)
  *
@@ -32,10 +32,6 @@
 #define JPEG_INTERNALS
 #endif
 #include "jpeglib.h"
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 // use "libjpegqs.h" for linking with library
 #include "quantsmooth.h"

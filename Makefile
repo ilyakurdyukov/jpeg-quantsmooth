@@ -153,5 +153,5 @@ libjpegqs_base.o: libjpegqs.c $(SRCDEPS)
 $(LIBMINIOMP): miniomp.o
 	$(AR) -rsc $@ $^
 miniomp.o: miniomp.c
-	$(CC) -O2 -Wall -Wextra -c -o $@ $<
+	$(CC) -DOVERFLOW_CHECKS=0 -O2 -Wall -Wextra -c -o $@ $< -ffunction-sections -fdata-sections
 
