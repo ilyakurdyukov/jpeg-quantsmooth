@@ -344,13 +344,13 @@ static void miniomp_barrier(int loop_end) {
 		return;
 	}
 	// LOG("barrier: team_id = %i\n", thr->team_id);
-	do i = __sync_val_compare_and_swap(&ws->wait, -1, 0); while (!i);
+	do i = __sync_val_compare_and_swap(&ws->wait, -1, 0); while (!i || i < -1);
 	if (i == -1) gomp_mutex_lock(&barrier_lock);
 	i = __sync_add_and_fetch(&ws->wait, 1);
-	if (i < nthreads) gomp_mutex_lock(&barrier_lock);
+	if (i < nthreads) { gomp_mutex_lock(&barrier_lock); ws->wait++; }
 	else {
 		if (loop_end) ws->lock = 0;
-		ws->wait = -1;
+		ws->wait = -nthreads;
 	}
 	gomp_mutex_unlock(&barrier_lock);
 }
