@@ -316,8 +316,11 @@ int main(int argc, char **argv) {
 
 	{
 		int niter = 3, flags = 0;
-		if (quality <= 3) niter = quality;
-		if (quality >= 4) flags = JPEGQS_DIAGONALS;
+		if (quality < 3) {
+			flags |= JPEGQS_LOW_QUALITY;
+			quality += 4;
+		}
+		if (quality >= 4) flags |= JPEGQS_DIAGONALS;
 		if (quality >= 5) flags |= JPEGQS_JOINT_YUV;
 		if (quality >= 6) flags |= JPEGQS_UPSAMPLE_UV;
 		opts.niter = cmd_niter >= 0 ? cmd_niter : niter;
