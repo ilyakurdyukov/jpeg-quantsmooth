@@ -154,13 +154,15 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 #endif
 #include "libjpegqs.h"
 
-typedef float jpegqs_table_t[DCTSIZE2 * 4 + DCTSIZE * (4 - 2)];
-
-static jpegqs_table_t* quantsmooth_init(int flags) {
+static float** quantsmooth_init(int flags) {
 	int i, n = DCTSIZE, nn = n * n, n2 = nn + n * 4;
 	float bcoef = flags & JPEGQS_DIAGONALS ? 4.0 : 2.0;
-	jpegqs_table_t *tables = malloc(DCTSIZE2 * sizeof(jpegqs_table_t));
-	if (!tables) return 0;
+	int size = flags & JPEGQS_DIAGONALS ? nn * 4 + n * (4 - 2) : nn * 2 + n * 4;
+	float *ptr, **tables = (float**)malloc(nn * sizeof(float*) + nn * size * sizeof(float) + 31);
+	if (!tables) return NULL;
+	ptr = (float*)(((intptr_t)&tables[DCTSIZE2] + 31) & -32);
+	for (i = nn - 1; i >= 0; i--, ptr += size)
+		tables[(int)jpegqs_natural_order[i]] = ptr;
 
 	for (i = 0; i < DCTSIZE2; i++) {
 		float *tab = tables[i], temp[DCTSIZE2];
@@ -296,7 +298,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 }
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
-		JSAMPLE *image, JSAMPLE *image2, int stride, int flags, jpegqs_table_t *tables) {
+		JSAMPLE *image, JSAMPLE *image2, int stride, int flags, float **tables) {
 	int k, n = DCTSIZE, x, y, need_refresh = 1;
 	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifdef USE_JSIMD
@@ -797,7 +799,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	int stop = 0;
 #endif
 	jvirt_barray_ptr coef_up[2] = { NULL, NULL };
-	jpegqs_table_t *tables = NULL;
+	float **tables = NULL;
 
 #ifdef WITH_LOG
 	int64_t time = 0;
