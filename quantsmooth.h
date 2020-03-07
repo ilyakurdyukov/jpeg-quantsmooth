@@ -144,6 +144,20 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 #warning compiling for ARM without NEON support
 #endif
 
+#ifdef USE_NEON
+#if 1 && defined(__SSE2__)
+#define vdivq_f32 _mm_div_ps
+#else
+static inline float32x4_t NEON_vdivq_f32(float32x4_t a, float32x4_t b) {
+	float32x4_t t = vrecpeq_f32(b);
+	t = vmulq_f32(t, vrecpsq_f32(b, t));
+	t = vmulq_f32(t, vrecpsq_f32(b, t));
+	return vmulq_f32(a, t);
+}
+#define vdivq_f32 NEON_vdivq_f32
+#endif
+#endif
+
 #endif // NO_SIMD
 
 #define ALIGN(n) __attribute__((aligned(n)))
@@ -224,7 +238,34 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	(void)x; (void)y;
 
 	fdct_float(buf, buf);
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
+	for (y = 0; y < n; y++) {
+		int16x8_t v0, v1, v2, v3; float32x4_t f0, f1, f2, f3, f4, f5; int32x4_t v4;
+		v1 = vld1q_s16((int16_t*)&quantval[y * n]);
+		v0 = vld1q_s16((int16_t*)&coef[y * n]); v3 = vshrq_n_s16(v0, 15);
+		v2 = veorq_s16(vaddq_s16(vshrq_n_s16(v1, 1), v3), v3);
+		v0 = vaddq_s16(v0, v2); f3 = vdupq_n_f32(0.5f); f5 = vnegq_f32(f3);
+#define M1(low, f0, f1, x) \
+	f4 = vld1q_f32(&buf[y * n + x]); \
+	v4 = vmovl_s16(vget_##low##_s16(v0)); \
+	f0 = vaddq_f32(f4, vbslq_f32(vcltq_f32(f4, vdupq_n_f32(0)), f5, f3)); \
+	/* correction for imprecise divide */ \
+	f1 = vbslq_f32(vreinterpretq_u32_s32(vshrq_n_s32(v4, 31)), f5, f3); \
+	f4 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v1))); \
+	f1 = vdivq_f32(vaddq_f32(vcvtq_f32_s32(v4), f1), f4);
+		M1(low, f0, f1, 0) M1(high, f2, f3, 4)
+#undef M1
+		v2 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f0)), vmovn_s32(vcvtq_s32_f32(f2)));
+		v0 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f1)), vmovn_s32(vcvtq_s32_f32(f3)));
+		v0 = vmulq_s16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
+		v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcgeq_s16(v0, vdupq_n_s16(0))));
+		v2 = vminq_s16(v2, vaddq_s16(v0, vshrq_n_s16(v3, 1)));
+		v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcleq_s16(v0, vdupq_n_s16(0))));
+		v2 = vmaxq_s16(v2, vsubq_s16(v0, vshrq_n_s16(v3, 1)));
+		vst1q_s16((int16_t*)&coef[y * n], v2);
+	} else
+#elif 1 && defined(USE_AVX2)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
 		__m128i v0, v1, v2, v3; __m256i v4, v5; __m256 f0, f1;
@@ -233,7 +274,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 		v0 = _mm_add_epi16(v0, v2);
-		f0 = _mm256_loadu_ps((void*)&buf[y * n]);
+		f0 = _mm256_loadu_ps(&buf[y * n]);
 		f1 = _mm256_blendv_ps(_mm256_set1_ps(0.5f), _mm256_set1_ps(-0.5f), f0);
 		f0 = _mm256_add_ps(f0, f1);
 		f1 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0));
@@ -309,10 +350,56 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 
 	if (image2) {
 		float ALIGN(32) buf[DCTSIZE2];
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+		for (y = 0; y < n; y++) {
+			int16x8_t v0, v1, sumA, sumB; float32x4_t v5, scale;
+			int32x4_t v2, v3, v4, sumAA1, sumAB1, sumAA2, sumAB2;
+#define M1(xx, yy) \
+	v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[(y + yy) * stride + xx]))); \
+	v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[(y + yy) * stride + xx]))); \
+	sumA = vaddq_s16(sumA, v0); sumB = vaddq_s16(sumB, v1); \
+	v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmlaq_s32(sumAA1, v2, v2); \
+	v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmlaq_s32(sumAB1, v2, v3); \
+	v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmlaq_s32(sumAA2, v2, v2); \
+	v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmlaq_s32(sumAB2, v2, v3);
+#define M2 \
+	sumA = vaddq_s16(sumA, sumA); sumB = vaddq_s16(sumB, sumB); \
+	sumAA1 = vaddq_s32(sumAA1, sumAA1); sumAA2 = vaddq_s32(sumAA2, sumAA2); \
+	sumAB1 = vaddq_s32(sumAB1, sumAB1); sumAB2 = vaddq_s32(sumAB2, sumAB2);
+			sumA = v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
+			sumB = v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[y * stride])));
+			v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmulq_s32(v2, v2);
+			v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmulq_s32(v2, v3);
+			v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmulq_s32(v2, v2);
+			v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmulq_s32(v2, v3);
+			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
+			M2 M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
+#undef M2
+#undef M1
+			v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
+#define M1(low, sumAA, sumAB, x)  \
+	v2 = vmovl_s16(vget_##low##_s16(sumA)); sumAA = vshlq_n_s32(sumAA, 4); \
+	v3 = vmovl_s16(vget_##low##_s16(sumB)); sumAB = vshlq_n_s32(sumAB, 4); \
+	sumAA = vmlsq_s32(sumAA, v2, v2); sumAB = vmlsq_s32(sumAB, v2, v3); \
+	v4 = vreinterpretq_s32_u32(vtstq_s32(sumAA, sumAA)); \
+	sumAB = vandq_s32(sumAB, v4); sumAA = vornq_s32(sumAA, v4); \
+	scale = vdivq_f32(vcvtq_f32_s32(sumAB), vcvtq_f32_s32(sumAA)); \
+	scale = vmaxq_f32(scale, vdupq_n_f32(-16.0f)); \
+	scale = vminq_f32(scale, vdupq_n_f32(16.0f)); \
+	v4 = vshll_n_s16(vget_##low##_s16(v1), 4); \
+	v5 = vcvtq_n_f32_s32(vsubq_s32(v4, v2), 4); \
+	v5 = vmlaq_f32(vcvtq_n_f32_s32(v3, 4), v5, scale); \
+	v5 = vmaxq_f32(v5, vdupq_n_f32(0)); \
+	v5 = vsubq_f32(v5, vdupq_n_f32(CENTERJSAMPLE)); \
+	v5 = vminq_f32(v5, vdupq_n_f32(CENTERJSAMPLE)); \
+	vst1q_f32(buf + y * n + x, v5);
+			M1(low, sumAA1, sumAB1, 0) M1(high, sumAA2, sumAB2, 4)
+#undef M1
+		}
+#elif 1 && defined(USE_AVX2)
 		for (y = 0; y < n; y++) {
 			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
-			__m256 v5, scale, offset;
+			__m256 v5, scale;
 #define M1(x0, y0, x1, y1) \
 	v0 = _mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0]); \
 	v1 = _mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1]); \
@@ -346,23 +433,21 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			scale = _mm256_div_ps(_mm256_cvtepi32_ps(sumAB), scale);
 			scale = _mm256_max_ps(scale, _mm256_set1_ps(-16.0f));
 			scale = _mm256_min_ps(scale, _mm256_set1_ps(16.0f));
-			v5 = _mm256_cvtepi32_ps(v2); offset = _mm256_cvtepi32_ps(v3);
-			// offset = _mm256_sub_ps(offset, _mm256_mul_ps(v5, scale));
-			offset = _mm256_fnmadd_ps(v5, scale, offset);
-			offset = _mm256_mul_ps(offset, _mm256_set1_ps(1.0f / 16));
 			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
-			v5 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0));
-			// v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), offset);
-			v5 = _mm256_fmadd_ps(v5, scale, offset);
+			v4 = _mm256_slli_epi32(_mm256_cvtepu8_epi32(v0), 4);
+			v5 = _mm256_cvtepi32_ps(_mm256_sub_epi32(v4, v2));
+			// v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), _mm256_cvtepi32_ps(v3));
+			v5 = _mm256_fmadd_ps(v5, scale, _mm256_cvtepi32_ps(v3));
+			v5 = _mm256_mul_ps(v5, _mm256_set1_ps(1.0f / 16));
 			v5 = _mm256_max_ps(v5, _mm256_setzero_ps());
-			v5 = _mm256_min_ps(v5, _mm256_set1_ps(MAXJSAMPLE));
 			v5 = _mm256_sub_ps(v5, _mm256_set1_ps(CENTERJSAMPLE));
+			v5 = _mm256_min_ps(v5, _mm256_set1_ps(CENTERJSAMPLE));
 			_mm256_storeu_ps(buf + y * n, v5);
 		}
 #elif 1 && defined(USE_SSE2)
 		for (y = 0; y < n; y++) {
 			__m128i v0, v1, v2, v3, v4, sumA, sumB, sumAA1, sumAB1, sumAA2, sumAB2;
-			__m128 v5, scale, offset;
+			__m128 v5, scale;
 #define M1(x0, y0, x1, y1) \
 	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0])); \
 	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1])); \
@@ -399,14 +484,13 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	scale = _mm_div_ps(_mm_cvtepi32_ps(sumAB), scale); \
 	scale = _mm_max_ps(scale, _mm_set1_ps(-16.0f)); \
 	scale = _mm_min_ps(scale, _mm_set1_ps(16.0f)); \
-	v5 = _mm_mul_ps(_mm_cvtepi32_ps(v2), scale); \
-	offset = _mm_sub_ps(_mm_cvtepi32_ps(v3), v5); \
-	offset = _mm_mul_ps(offset, _mm_set1_ps(1.0f / 16)); \
-	v5 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v1, v0)); \
-	v5 = _mm_add_ps(_mm_mul_ps(v5, scale), offset); \
+	v4 = _mm_slli_epi32(_mm_unpack##lo##_epi16(v1, v0), 4); \
+	v5 = _mm_cvtepi32_ps(_mm_sub_epi32(v4, v2)); \
+	v5 = _mm_add_ps(_mm_mul_ps(v5, scale), _mm_cvtepi32_ps(v3)); \
+	v5 = _mm_mul_ps(v5, _mm_set1_ps(1.0f / 16)); \
 	v5 = _mm_max_ps(v5, _mm_setzero_ps()); \
-	v5 = _mm_min_ps(v5, _mm_set1_ps(MAXJSAMPLE)); \
 	v5 = _mm_sub_ps(v5, _mm_set1_ps(CENTERJSAMPLE)); \
+	v5 = _mm_min_ps(v5, _mm_set1_ps(CENTERJSAMPLE)); \
 	_mm_storeu_ps(buf + y * n + x, v5);
 			M1(lo, sumAA1, sumAB1, 0) M1(hi, sumAA2, sumAB2, 4)
 #undef M1
@@ -458,7 +542,41 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			range = roundf(range);
 		}
 
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+		for (y = 0; y < n; y++) {
+			int16x8_t v4, v5; uint16x8_t v6 = vdupq_n_u16((int)range);
+			float32x2_t f4; uint8x8_t i0, i1;
+			float32x4_t f0, f1, s0 = vdupq_n_f32(0), s1 = s0, s2 = s0, s3 = s0;
+			f4 = vset_lane_f32(c1, vdup_n_f32(c0), 1);
+			i0 = vld1_u8(&image[y * stride]);
+#define M1(i, x, y) \
+	i1 = vld1_u8(&image[(y) * stride + x]); \
+	v4 = vreinterpretq_s16_u16(vsubl_u8(i0, i1)); \
+	v5 = vreinterpretq_s16_u16(vqsubq_u16(v6, \
+			vreinterpretq_u16_s16(vabsq_s16(v4)))); \
+	M2(low, s0, s1, i) M2(high, s2, s3, i)
+#define M2(low, s0, s1, i) \
+	f0 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))); \
+	f0 = vmulq_f32(f0, f0); f1 = vmulq_lane_f32(f0, f4, i); \
+	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v4)))); \
+	s0 = vmlaq_f32(s0, f0, f1); s1 = vmlaq_f32(s1, f1, f1);
+			M1(1, -1, y-1) M1(0, 0, y-1) M1(1, 1, y-1)
+			M1(0, -1, y)                 M1(0, 1, y)
+			M1(1, -1, y+1) M1(0, 0, y+1) M1(1, 1, y+1)
+#undef M1
+#undef M2
+			v4 = vreinterpretq_s16_u16(vmovl_u8(i0));
+#define M1(low, s0, s1, x) \
+	f1 = vbslq_f32(vceqq_f32(s1, vdupq_n_f32(0)), vdupq_n_f32(1.0f), s1); \
+	f0 = vdivq_f32(s0, f1); \
+	f1 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v4))); \
+	f0 = vsubq_f32(f1, f0); \
+	f0 = vsubq_f32(f0, vdupq_n_f32(CENTERJSAMPLE)); \
+	vst1q_f32(buf + y * n + x, f0);
+			M1(low, s0, s1, 0) M1(high, s2, s3, 4)
+#undef M1
+		}
+#elif 1 && defined(USE_AVX2)
 		for (y = 0; y < n; y++) {
 			__m128i v0, v1, v4, v5, v6 = _mm_set1_epi16((int)range);
 			__m256 f0, f1, f4, f5, s0 = _mm256_setzero_ps(), s1 = s0;
@@ -480,8 +598,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			f0 = _mm256_div_ps(s0, s1);
 			f1 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0));
 			f0 = _mm256_sub_ps(f1, f0);
-			f0 = _mm256_max_ps(f0, _mm256_setzero_ps());
-			f0 = _mm256_min_ps(f0, _mm256_set1_ps(MAXJSAMPLE));
 			f0 = _mm256_sub_ps(f0, _mm256_set1_ps(CENTERJSAMPLE));
 			_mm256_storeu_ps(buf + y * n, f0);
 		}
@@ -513,8 +629,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	f0 = _mm_div_ps(s0, _mm_or_ps(s1, f1)); \
 	f1 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v7)); \
 	f0 = _mm_sub_ps(f1, f0); \
-	f0 = _mm_max_ps(f0, _mm_setzero_ps()); \
-	f0 = _mm_min_ps(f0, _mm_set1_ps(MAXJSAMPLE)); \
 	f0 = _mm_sub_ps(f0, _mm_set1_ps(CENTERJSAMPLE)); \
 	_mm_storeu_ps(buf + y * n + x, f0);
 			M1(lo, s0, s1, 0) M1(hi, s2, s3, 4)
@@ -533,7 +647,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			M1(1, x-1, y+1) M1(0, x, y+1) M1(1, x+1, y+1)
 #undef M1
 			if (an > 0.0f) a -= a0 / an;
-			a = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
 			buf[y * n + x] = a - CENTERJSAMPLE;
 		}
 #endif

@@ -457,7 +457,49 @@ static void fdct_float(float *in, float *out) {
 	M2(7, SUB(t4, ADD(z1, z3))) M2(5, SUB(t5, ADD(z2, z4))) \
 	M2(3, SUB(t6, ADD(z2, z3))) M2(1, SUB(t7, ADD(z1, z4)))
 
-#if 1 && defined(USE_AVX2)
+#if 1 && defined(USE_NEON)
+	float32x4_t *ws, buf[DCTSIZE2] ALIGN(16); int i;
+	float32x4_t t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD vaddq_f32
+#define SUB vsubq_f32
+#define MUL vmulq_f32
+#define SET1 vdupq_n_f32
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, in += 4, ws += 4) {
+#define M1(i) vld1q_f32(in + i * DCTSIZE)
+#define M2(i, t) ws[(i & 3) + (i & 4) * 2] = t;
+		M3
+#undef M1
+#undef M2
+	}
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, ws += 8, out += 4 * DCTSIZE) {
+		float32x4_t c0 = SET1(0.125f);
+		float32x4x4_t q0 = vld4q_f32((float*)&ws[0]), q1 = vld4q_f32((float*)&ws[4]);
+#define M1(i, n) float32x4_t x##i = q##n.val[i & 3];
+		M1(0, 0) M1(1, 0) M1(2, 0) M1(3, 0) M1(4, 1) M1(5, 1) M1(6, 1) M1(7, 1)
+#undef M1
+
+#define M1(i) x##i
+#define M2(i, t) x##i = vmulq_f32(t, c0);
+		M3
+#undef M1
+#undef M2
+
+		{
+			float32x4x2_t p0, p1, p2;
+#define M1(i, j) p2 = vzipq_f32(p0.val[i], p1.val[i]); \
+	vst1q_f32(out + (i * 2) * DCTSIZE + j, p2.val[0]); \
+	vst1q_f32(out + (i * 2 + 1) * DCTSIZE + j, p2.val[1]);
+			p0 = vzipq_f32(x0, x2); p1 = vzipq_f32(x1, x3); M1(0, 0) M1(1, 0)
+			p0 = vzipq_f32(x4, x6); p1 = vzipq_f32(x5, x7); M1(0, 4) M1(1, 4)
+#undef M1
+		}
+	}
+#elif 1 && defined(USE_AVX2)
 	__m256 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 
@@ -526,6 +568,7 @@ x3 = _mm256_unpackhi_ps(t0, t1);
 
 	ws = buf;
 	for (i = 0; i < DCTSIZE; i += 4, ws += 8, out += 4 * DCTSIZE) {
+		__m128 c0 = SET1(0.125f);
 #define M1(i) v##i = ws[i];
 		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
 #undef M1
@@ -542,7 +585,7 @@ x3 = _mm_unpackhi_ps(t0, t1);
 		M4(v0, v1, v2, v3, x0, x1, x2, x3)
 		M4(v4, v5, v6, v7, x4, x5, x6, x7)
 #define M1(i) x##i
-#define M2(i, t) v##i = MUL(t, SET1(0.125f));
+#define M2(i, t) v##i = MUL(t, c0);
 		M3
 #undef M1
 #undef M2
