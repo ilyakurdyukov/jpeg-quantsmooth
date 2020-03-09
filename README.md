@@ -21,7 +21,7 @@ Without multithreading and SIMD optimizations it runs slower than native code.
 
 ## Options
 
-`-q, --quality n` Quality setting (1-6, default is 3)  
+`-q, --quality n` Quality setting (0-6, default is 3)  
 `-n, --niter n` Number of iterations (default is 3)  
 `-t, --threads n` Set the number of CPU threads to use  
 `-o, --optimize` Option for libjpeg to produce smaller output file  
@@ -30,6 +30,20 @@ Without multithreading and SIMD optimizations it runs slower than native code.
 
 - The processing time includes only the smoothing algorithm, jpeg reading and writing time is not included.
 - More iterations can make the result look like CG art, can make the photos look unnatural.
+
+The quality setting sets a combination of flags for processing:
+
+3. default
+4. adds `DIAGONALS` flag  
+smoother diagonal edges, ~1.5 times slower
+5. adds `JOINT_YUV` flag  
+chroma channels will depend from luminance, better color consistency
+6. adds `UPSAMPLE_UV` flag  
+non-blurring chroma upsampling, unlike `fancy upsampling` from *libjpeg*
+
+- levels 0-2 is the same as 4-6, but with `LOW_QUALITY` flag  
+~10 times faster, but the quality is lower  
+`LOW_QUALITY` implies `DIAGONALS` (always set)
 
 ## Examples
 

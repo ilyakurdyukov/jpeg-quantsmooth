@@ -519,7 +519,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			offset = (sumB - scale * sumA) * divN;
 
 			a = image2[y * stride + x] * scale + offset;
-			a = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
+			a = a < 0 ? 0 : a > MAXJSAMPLE + 1 ? MAXJSAMPLE + 1 : a;
 			buf[y * n + x] = a - CENTERJSAMPLE;
 		}
 #endif
