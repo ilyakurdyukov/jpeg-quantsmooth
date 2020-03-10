@@ -29,7 +29,7 @@ enum {
 #define JPEGQS_ATTR
 #endif
 
-#define JPEGQS_VERSION "2020-03-06"
+#define JPEGQS_VERSION "2020-03-10"
 #define JPEGQS_COPYRIGHT "Copyright (C) 2020 Ilya Kurdyukov"
 
 typedef struct {

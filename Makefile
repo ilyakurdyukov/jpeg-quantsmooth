@@ -23,6 +23,8 @@ else ifeq ($(SIMD),none)
 SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
 SIMDFLG := -march=native
+else ifeq ($(SIMD),avx512)
+SIMDFLG := -mavx512f -mfma
 else ifeq ($(SIMD),avx2)
 SIMDFLG := -mavx2 -mfma
 else ifeq ($(SIMD),sse2)
@@ -128,12 +130,14 @@ else
 SIMDSEL_FLAGS ?= -DTRANSCODE_ONLY -DWITH_LOG
 endif
 
+jpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx512 -mavx512f -mfma $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
 jpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
 jpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -DSKIP_ON_X64 -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2 -c -o $@ $<
 jpegqs_base.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE -c -o $@ $<
 
 ifeq ($(SIMD),select)
 lib$(APPNAME).a: libjpegqs_avx2.o libjpegqs_sse2.o libjpegqs_base.o
@@ -143,12 +147,14 @@ lib$(APPNAME).a: libjpegqs.o
 
 libjpegqs.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(CFLAGS_APP) -c -o $@ $<
+libjpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
+	$(CC) -DSIMD_NAME=avx512 -mavx512f -mfma $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
 libjpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DNO_HELPERS -c -o $@ $<
+	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
 libjpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DNO_HELPERS -DSKIP_ON_X64 -c -o $@ $<
+	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2 -c -o $@ $<
 libjpegqs_base.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -c -o $@ $<
+	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE -c -o $@ $<
 
 $(LIBMINIOMP): miniomp.o
 	$(AR) -rsc $@ $^

@@ -36,7 +36,7 @@
 #define QS_ARGS (j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts)
 
 #define M1(name) int do_quantsmooth_##name QS_ARGS;
-M1(avx2) M1(sse2) M1(base)
+M1(base) M1(sse2) M1(avx2) M1(avx512)
 #undef M1
 
 #ifdef _MSC_VER
@@ -63,9 +63,14 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		get_cpuid(7, 0, cpuid);
 		if (!(cpuid[1] & (1 << 5))) break; // AVX2
 		type = 2;
+		// if (!(cpuid[1] & (1 << 16))) break; // AVX512F
+		// type = 3;
 	} while (0);
 
 #define M1(name) return do_quantsmooth_##name(srcinfo, coef_arrays, opts);
+#ifdef __x86_64__
+	// if (type == 3) M1(avx512)
+#endif
 	if (type == 2) M1(avx2)
 #ifndef __x86_64__
 	if (type == 1) M1(sse2)
@@ -79,9 +84,13 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 #define QS_CONCAT(x) do_quantsmooth_##x
 #define QS_NAME1(x) QS_CONCAT(x)
 #define QS_NAME QS_NAME1(SIMD_NAME)
+#ifndef SIMD_BASE
+#define NO_HELPERS
+#endif
 #endif
 #define JPEGQS_ATTR
-#if !defined(SKIP_ON_X64) || !defined(__x86_64__)
+#if !(defined(SIMD_SSE2) && defined(__x86_64__)) && \
+	!(defined(SIMD_AVX512) && !defined(__x86_64__))
 #include "quantsmooth.h"
 #endif
 #endif
