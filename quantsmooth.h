@@ -610,6 +610,35 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			M1(low, s0, s1, 0) M1(high, s2, s3, 4)
 #undef M1
 		}
+#elif 1 && defined(USE_AVX512)
+		for (y = 0; y < n; y += 2) {
+			__m256i v0, v1, v4, v5, v6 = _mm256_set1_epi16((int)range);
+			__m512 f0, f1, f4, f5, s0 = _mm512_setzero_ps(), s1 = s0; __mmask16 m0;
+			f4 = _mm512_set1_ps(c0); f5 = _mm512_set1_ps(c1);
+#define M2(v0, pos) \
+	v0 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi64( \
+			_mm_loadl_epi64((void*)&image[pos]), \
+			_mm_loadl_epi64((void*)&image[pos + stride])));
+#define M1(f4, x, y) M2(v1, (y) * stride + x) \
+	v4 = _mm256_sub_epi16(v0, v1); v5 = _mm256_subs_epu16(v6, _mm256_abs_epi16(v4)); \
+	f0 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v5)); \
+	f0 = _mm512_mul_ps(f0, f0); f1 = _mm512_mul_ps(f0, f4); \
+	f0 = _mm512_mul_ps(f0, _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v4))); \
+	s0 = _mm512_fmadd_ps(f0, f1, s0); s1 = _mm512_fmadd_ps(f1, f1, s1);
+			M2(v0, y * stride)
+			M1(f5, -1, y-1) M1(f4, 0, y-1) M1(f5, 1, y-1)
+			M1(f4, -1, y)                  M1(f4, 1, y)
+			M1(f5, -1, y+1) M1(f4, 0, y+1) M1(f5, 1, y+1)
+#undef M1
+#undef M2
+			m0 = _mm512_cmp_ps_mask(s1, _mm512_setzero_ps(), 0);
+			s1 = _mm512_mask_blend_ps(m0, s1, _mm512_set1_ps(1.0f));
+			f0 = _mm512_div_ps(s0, s1);
+			f1 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v0));
+			f0 = _mm512_sub_ps(f1, f0);
+			f0 = _mm512_sub_ps(f0, _mm512_set1_ps(CENTERJSAMPLE));
+			_mm512_storeu_ps(fbuf + y * n, f0);
+		}
 #elif 1 && defined(USE_AVX2)
 		for (y = 0; y < n; y++) {
 			__m128i v0, v1, v4, v5, v6 = _mm_set1_epi16((int)range);

@@ -18,7 +18,7 @@ MFLAGS ?=
 SIMDFLG :=
 SIMDOBJ :=
 ifeq ($(SIMD),select)
-SIMDOBJ := jpegqs_avx2.o jpegqs_sse2.o jpegqs_base.o
+SIMDOBJ := jpegqs_base.o jpegqs_sse2.o jpegqs_avx2.o jpegqs_avx512.o
 else ifeq ($(SIMD),none)
 SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
@@ -140,7 +140,7 @@ jpegqs_base.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE -c -o $@ $<
 
 ifeq ($(SIMD),select)
-lib$(APPNAME).a: libjpegqs_avx2.o libjpegqs_sse2.o libjpegqs_base.o
+lib$(APPNAME).a: libjpegqs_base.o libjpegqs_sse2.o libjpegqs_avx2.o libjpegqs_avx512.o
 endif
 lib$(APPNAME).a: libjpegqs.o
 	$(AR) -rsc $@ $^

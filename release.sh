@@ -16,5 +16,5 @@ test -f ldscript$bits.txt && link="-Wl,-T,ldscript$bits.txt" || link=
 # make JPEGLIB="$lib" SIMD=none MFLAGS="-O3 -municode" APPNAME="jpegqs${bits}_none" clean app
 
 rm -f "winlib$bits/libgomp.a"
-make LIBMINIOMP="$omp" JPEGLIB="$lib" SIMD=select MFLAGS="-municode -ffast-math" APPNAME="jpegqs${bits}" LFLAGS="$link" clean all
+make LIBMINIOMP="$omp" JPEGLIB="$lib" SIMD=select MFLAGS="-municode -fno-asynchronous-unwind-tables" APPNAME="jpegqs${bits}" LFLAGS="$link" clean all
 

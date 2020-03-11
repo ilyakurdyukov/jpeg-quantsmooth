@@ -235,7 +235,7 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, jpeg_verbose = 0, cmd_info = 15;
+	int optimize = 0, jpeg_verbose = 0, cmd_info = 15, cmd_cpu = 0;
 	int quality = 3, cmd_niter = -1, cmd_flags = -1;
 	jpegqs_control_t opts = { 0 };
 #ifdef _WIN32
@@ -272,6 +272,7 @@ int main(int argc, char **argv) {
 			case 'q': arg = S("--quality"); break;
 			case 't': arg = S("--threads"); break;
 			case 'f': arg = S("--flags"); break;
+			case 'c': arg = S("--cpu"); break;
 			default: c = '-';
 		}
 		if (c != '-' && arg1[2]) {
@@ -280,38 +281,71 @@ int main(int argc, char **argv) {
 		}
 
 #define CHECKNUM if ((unsigned)(arg2[0] - '0') > 9) break;
-		if (!strcmp(arg, "--optimize")) {
-			optimize = 1;
-			argv++; argc--;
-		} else if (argc > 2 && !strcmp(arg, "--verbose")) {
-			CHECKNUM
-			jpeg_verbose = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (argc > 2 && !strcmp(arg, "--info")) {
-			CHECKNUM
-			cmd_info = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (argc > 2 && !strcmp(arg, "--niter")) {
-			CHECKNUM
-			cmd_niter = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (argc > 2 && !strcmp(arg, "--quality")) {
-			CHECKNUM
-			quality = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (argc > 2 && !strcmp(arg, "--threads")) {
-			CHECKNUM
-			opts.threads = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (argc > 2 && !strcmp(arg, "--flags")) {
-			CHECKNUM
-			cmd_flags = atoi(arg2);
-			argv += 2; argc -= 2;
-		} else if (!strcmp(arg, "--")) {
-			argv++; argc--;
+		switch (arg[2]) {
+			case 'o':
+			if (!strcmp(arg, "--optimize")) {
+				optimize = 1;
+				argv++; argc--; arg = NULL;
+			}
+			break;
+			case 'v':
+			if (argc > 2 && !strcmp(arg, "--verbose")) {
+				CHECKNUM
+				jpeg_verbose = atoi(arg2);
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 'i':
+			if (argc > 2 && !strcmp(arg, "--info")) {
+				CHECKNUM
+				cmd_info = atoi(arg2);
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 'n':
+			if (argc > 2 && !strcmp(arg, "--niter")) {
+				CHECKNUM
+				cmd_niter = atoi(arg2);
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 'q':
+			if (argc > 2 && !strcmp(arg, "--quality")) {
+				CHECKNUM
+				quality = atoi(arg2);
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 't':
+			if (argc > 2 && !strcmp(arg, "--threads")) {
+				CHECKNUM
+				opts.threads = atoi(arg2);
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 'f':
+			if (argc > 2 && !strcmp(arg, "--flags")) {
+				CHECKNUM
+				cmd_flags = atoi(arg2);
+				cmd_flags &= JPEGQS_FLAGS_MASK;
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 'c':
+			if (argc > 2 && !strcmp(arg, "--cpu")) {
+				CHECKNUM
+				cmd_cpu = atoi(arg2);
+				if (cmd_cpu > JPEGQS_CPU_MASK) cmd_cpu = JPEGQS_CPU_MASK;
+				argv += 2; argc -= 2; arg = NULL;
+			}
+			break;
+			case 0:
+			if (!strcmp(arg, "--")) {
+				argv++; argc--;
+			}
 			break;
 		}
-		else break;
+		if (arg) break;
 	}
 
 	{
@@ -325,6 +359,7 @@ int main(int argc, char **argv) {
 		if (quality >= 6) flags |= JPEGQS_UPSAMPLE_UV;
 		opts.niter = cmd_niter >= 0 ? cmd_niter : niter;
 		opts.flags = (cmd_flags >= 0 ? cmd_flags : flags) | JPEGQS_TRANSCODE;
+		opts.flags |= cmd_cpu << JPEGQS_CPU_SHIFT;
 		opts.flags |= cmd_info << JPEGQS_INFO_SHIFT;
 	}
 
