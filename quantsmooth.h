@@ -286,8 +286,8 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		f0 = _mm512_add_ps(f0, f1);
 		f1 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v0));
 		f1 = _mm512_div_ps(f1, _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v1)));
-		v2 = _mm512_cvtepi32_epi16(_mm512_cvt_roundps_epi32(f0, 3 | 8));
-		v0 = _mm512_cvtepi32_epi16(_mm512_cvt_roundps_epi32(f1, 3 | 8));
+		v2 = _mm512_cvtepi32_epi16(_mm512_cvttps_epi32(f0));
+		v0 = _mm512_cvtepi32_epi16(_mm512_cvttps_epi32(f1));
 		v0 = _mm256_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
 		v1 = _mm256_add_epi16(v1, _mm256_set1_epi16(-1));
 		v3 = _mm256_sub_epi16(v1, _mm256_srai_epi16(v0, 15));
@@ -310,8 +310,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		f0 = _mm256_add_ps(f0, f1);
 		f1 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0));
 		f1 = _mm256_div_ps(f1, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v1)));
-		v4 = _mm256_cvtps_epi32(_mm256_round_ps(f0, 3 | 8));
-		v5 = _mm256_cvtps_epi32(_mm256_round_ps(f1, 3 | 8));
+		v4 = _mm256_cvttps_epi32(f0); v5 = _mm256_cvttps_epi32(f1);
 		v4 = _mm256_permute4x64_epi64(_mm256_packs_epi32(v5, v4), 0xd8);
 		v0 = _mm256_castsi256_si128(v4); v2 = _mm256_extracti128_si256(v4, 1);
 		v0 = _mm_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
@@ -323,8 +322,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		_mm_storeu_si128((void*)&coef[y * n], v2);
 	} else
 #elif 1 && defined(USE_SSE2)
-	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
-	unsigned mxcsr = _mm_getcsr();
+	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
 		__m128i v0, v1, v2, v3; __m128 f0, f1, f2, f3, f4;
 		v1 = _mm_loadu_si128((void*)&quantval[y * n]);
@@ -343,10 +341,8 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	f1 = _mm_div_ps(f1, f4);
 		M1(lo, f0, f1, 0) M1(hi, f2, f3, 4)
 #undef M1
-		_mm_setcsr(mxcsr | 0x6000);
-		v2 = _mm_packs_epi32(_mm_cvtps_epi32(f0), _mm_cvtps_epi32(f2));
-		v0 = _mm_packs_epi32(_mm_cvtps_epi32(f1), _mm_cvtps_epi32(f3));
-		_mm_setcsr(mxcsr);
+		v2 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f2));
+		v0 = _mm_packs_epi32(_mm_cvttps_epi32(f1), _mm_cvttps_epi32(f3));
 		v0 = _mm_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
 		v1 = _mm_add_epi16(v1, _mm_set1_epi16(-1));
 		v3 = _mm_sub_epi16(v1, _mm_srai_epi16(v0, 15));
@@ -354,7 +350,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v3 = _mm_sub_epi16(v1, _mm_cmpgt_epi16(v0, _mm_setzero_si128()));
 		v2 = _mm_max_epi16(v2, _mm_sub_epi16(v0, _mm_srai_epi16(v3, 1)));
 		_mm_storeu_si128((void*)&coef[y * n], v2);
-	} } else
+	} else
 #endif
 	for (x = 0; x < n * n; x++) {
 		int div = quantval[x], coef1 = coef[x], add;
@@ -997,6 +993,291 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	}
 }
 
+static void upsample_row(int w1, int y0, int y1,
+		JSAMPLE *image, JSAMPLE *image2, int stride,
+		JSAMPLE *image1, int stride1, JSAMPLE *mem, int st,
+		int ww, int ws, int hs) {
+	float ALIGN(32) fbuf[DCTSIZE2];
+	int x, y, xx, yy, n = DCTSIZE;
+	image += (y0 + 1) * stride + 1;
+	image2 += (y0 + 1) * stride + 1;
+	image1 += (y0 * hs + 1) * stride1 + 1;
+	mem += y0 * hs * st;
+	y1 -= y0;
+
+	for (xx = 0; xx < w1; xx += n, image += n, image2 += n) {
+		JSAMPLE *p1 = image1 + xx * ws, *out = mem + xx * ws;
+
+#if 1 && defined(USE_NEON)
+		for (y = 0; y < n; y++) {
+			int16x8_t v0, v1, sumA, sumB; float32x4_t v5, scale;
+			int32x4_t v2, v3, v4, sumAA1, sumAB1, sumAA2, sumAB2;
+#define M1(xx, yy) \
+	v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[(y + yy) * stride + xx]))); \
+	v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[(y + yy) * stride + xx]))); \
+	sumA = vaddq_s16(sumA, v0); sumB = vaddq_s16(sumB, v1); \
+	v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmlaq_s32(sumAA1, v2, v2); \
+	v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmlaq_s32(sumAB1, v2, v3); \
+	v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmlaq_s32(sumAA2, v2, v2); \
+	v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmlaq_s32(sumAB2, v2, v3);
+#define M2 \
+	sumA = vaddq_s16(sumA, sumA); sumB = vaddq_s16(sumB, sumB); \
+	sumAA1 = vaddq_s32(sumAA1, sumAA1); sumAA2 = vaddq_s32(sumAA2, sumAA2); \
+	sumAB1 = vaddq_s32(sumAB1, sumAB1); sumAB2 = vaddq_s32(sumAB2, sumAB2);
+			sumA = v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
+			sumB = v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[y * stride])));
+			v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmulq_s32(v2, v2);
+			v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmulq_s32(v2, v3);
+			v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmulq_s32(v2, v2);
+			v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmulq_s32(v2, v3);
+			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
+			M2 M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
+#undef M2
+#undef M1
+			v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
+#define M1(low, sumAA, sumAB, x)  \
+	v2 = vmovl_s16(vget_##low##_s16(sumA)); sumAA = vshlq_n_s32(sumAA, 4); \
+	v3 = vmovl_s16(vget_##low##_s16(sumB)); sumAB = vshlq_n_s32(sumAB, 4); \
+	sumAA = vmlsq_s32(sumAA, v2, v2); sumAB = vmlsq_s32(sumAB, v2, v3); \
+	v4 = vreinterpretq_s32_u32(vtstq_s32(sumAA, sumAA)); \
+	sumAB = vandq_s32(sumAB, v4); sumAA = vornq_s32(sumAA, v4); \
+	scale = vdivq_f32(vcvtq_f32_s32(sumAB), vcvtq_f32_s32(sumAA)); \
+	scale = vmaxq_f32(scale, vdupq_n_f32(-16.0f)); \
+	scale = vminq_f32(scale, vdupq_n_f32(16.0f)); \
+	v5 = scale; \
+	vst1q_f32(fbuf + y * n + x, v5);
+			M1(low, sumAA1, sumAB1, 0) M1(high, sumAA2, sumAB2, 4)
+#undef M1
+		}
+#elif 1 && defined(USE_AVX2)
+		for (y = 0; y < n; y++) {
+			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
+			__m256 v5, scale;
+#define M1(x0, y0, x1, y1) \
+	v0 = _mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1]); \
+	v2 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
+	v0 = _mm_loadl_epi64((void*)&image[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((void*)&image[(y + y1) * stride + x1]); \
+	v3 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
+	sumA = _mm256_add_epi16(sumA, v2); \
+	sumB = _mm256_add_epi16(sumB, v3); \
+	sumAA = _mm256_add_epi32(sumAA, _mm256_madd_epi16(v2, v2)); \
+	sumAB = _mm256_add_epi32(sumAB, _mm256_madd_epi16(v2, v3));
+			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
+			v1 = _mm_loadl_epi64((void*)&image[y * stride]);
+			sumA = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v0));
+			sumB = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v1, v1));
+			sumAA = _mm256_madd_epi16(sumA, sumA);
+			sumAB = _mm256_madd_epi16(sumA, sumB);
+			M1(0, -1, -1, 0) M1(1, 0, 0, 1)
+			sumA = _mm256_add_epi16(sumA, sumA); sumAA = _mm256_add_epi32(sumAA, sumAA);
+			sumB = _mm256_add_epi16(sumB, sumB); sumAB = _mm256_add_epi32(sumAB, sumAB);
+			M1(-1, -1, 1, -1) M1(-1, 1, 1, 1)
+#undef M1
+			v3 = _mm256_set1_epi16(1);
+			v2 = _mm256_madd_epi16(sumA, v3); sumAA = _mm256_slli_epi32(sumAA, 4);
+			v3 = _mm256_madd_epi16(sumB, v3); sumAB = _mm256_slli_epi32(sumAB, 4);
+			sumAA = _mm256_sub_epi32(sumAA, _mm256_mullo_epi32(v2, v2));
+			sumAB = _mm256_sub_epi32(sumAB, _mm256_mullo_epi32(v2, v3));
+			v4 = _mm256_cmpeq_epi32(sumAA, _mm256_setzero_si256());
+			sumAB = _mm256_andnot_si256(v4, sumAB);
+			scale = _mm256_cvtepi32_ps(_mm256_or_si256(sumAA, v4));
+			scale = _mm256_div_ps(_mm256_cvtepi32_ps(sumAB), scale);
+			scale = _mm256_max_ps(scale, _mm256_set1_ps(-16.0f));
+			scale = _mm256_min_ps(scale, _mm256_set1_ps(16.0f));
+			v5 = scale;
+			_mm256_storeu_ps(fbuf + y * n, v5);
+		}
+#elif 1 && defined(USE_SSE2)
+		for (y = 0; y < y1; y++) {
+			__m128i v0, v1, v2, v3, v4, sumA, sumB, sumAA1, sumAB1, sumAA2, sumAB2;
+			__m128 v5, scale;
+#define M1(x0, y0, x1, y1) \
+	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0])); \
+	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1])); \
+	v2 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y0) * stride + x0])); \
+	v3 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y1) * stride + x1])); \
+	sumA = _mm_add_epi16(_mm_add_epi16(sumA, v0), v1); \
+	sumB = _mm_add_epi16(_mm_add_epi16(sumB, v2), v3); \
+	v4 = _mm_unpacklo_epi16(v0, v1); sumAA1 = _mm_add_epi32(sumAA1, _mm_madd_epi16(v4, v4)); \
+	v1 = _mm_unpackhi_epi16(v0, v1); sumAA2 = _mm_add_epi32(sumAA2, _mm_madd_epi16(v1, v1)); \
+	sumAB1 = _mm_add_epi32(sumAB1, _mm_madd_epi16(v4, _mm_unpacklo_epi16(v2, v3))); \
+	sumAB2 = _mm_add_epi32(sumAB2, _mm_madd_epi16(v1, _mm_unpackhi_epi16(v2, v3)));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v2 = _mm_unpacklo_epi16(v0, v0); sumAA1 = _mm_madd_epi16(v2, v2);
+			v3 = _mm_unpacklo_epi16(v1, v1); sumAB1 = _mm_madd_epi16(v2, v3);
+			v2 = _mm_unpackhi_epi16(v0, v0); sumAA2 = _mm_madd_epi16(v2, v2);
+			v3 = _mm_unpackhi_epi16(v1, v1); sumAB2 = _mm_madd_epi16(v2, v3);
+			sumA = _mm_add_epi16(v0, v0); sumB = _mm_add_epi16(v1, v1);
+			M1(0, -1, -1, 0) M1(1, 0, 0, 1)
+			sumA = _mm_add_epi16(sumA, sumA); sumB = _mm_add_epi16(sumB, sumB);
+			sumAA1 = _mm_add_epi32(sumAA1, sumAA1); sumAA2 = _mm_add_epi32(sumAA2, sumAA2);
+			sumAB1 = _mm_add_epi32(sumAB1, sumAB1); sumAB2 = _mm_add_epi32(sumAB2, sumAB2);
+			M1(-1, -1, 1, -1) M1(-1, 1, 1, 1)
+#undef M1
+			v0 = _mm_setzero_si128();
+#define M1(lo, sumAA, sumAB, x)  \
+	v2 = _mm_unpack##lo##_epi16(sumA, v0); sumAA = _mm_slli_epi32(sumAA, 4); \
+	v3 = _mm_unpack##lo##_epi16(sumB, v0); sumAB = _mm_slli_epi32(sumAB, 4); \
+	sumAA = _mm_sub_epi32(sumAA, _mm_mullo_epi32(v2, v2)); \
+	sumAB = _mm_sub_epi32(sumAB, _mm_mullo_epi32(v2, v3)); \
+	v4 = _mm_cmpeq_epi32(sumAA, v0); sumAB = _mm_andnot_si128(v4, sumAB); \
+	scale = _mm_cvtepi32_ps(_mm_or_si128(sumAA, v4)); \
+	scale = _mm_div_ps(_mm_cvtepi32_ps(sumAB), scale); \
+	scale = _mm_max_ps(scale, _mm_set1_ps(-16.0f)); \
+	scale = _mm_min_ps(scale, _mm_set1_ps(16.0f)); \
+	v5 = scale; \
+	_mm_storeu_ps(fbuf + y * n + x, v5);
+			M1(lo, sumAA1, sumAB1, 0) M1(hi, sumAA2, sumAB2, 4)
+#undef M1
+		}
+#else
+		for (y = 0; y < y1; y++)
+		for (x = 0; x < n; x++) {
+			float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
+			float divN = 1.0f / 16, scale;
+#define M1(xx, yy) { \
+	float a = image2[(y + yy) * stride + x + xx]; \
+	float b = image[(y + yy) * stride + x + xx]; \
+	sumA += a; sumAA += a * a; \
+	sumB += b; sumAB += a * b; }
+#define M2 sumA += sumA; sumB += sumB; \
+	sumAA += sumAA; sumAB += sumAB;
+			M1(0, 0) M2
+			M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
+			M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
+#undef M2
+#undef M1
+			scale = sumAA - sumA * divN * sumA;
+			if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
+			scale = scale < -16.0f ? -16.0f : scale;
+			scale = scale > 16.0f ? 16.0f : scale;
+			// offset = (sumB - scale * sumA) * divN;
+			fbuf[y * n + x] = scale;
+		}
+#endif
+
+		// faster case for 4:2:0
+		if (1 && !((ws - 2) | (hs - 2)))
+#if 1 && defined(USE_NEON)
+		for (y = 0; y < y1; y++) {
+			int16x8_t v0, v1, v4, v5, v6; float32x4x2_t q0, q1;
+			float32x4_t f0, f1, f2, f3;
+			v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[y * stride])));
+			v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
+#define M3(low, x) \
+	f2 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0))); \
+	f3 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v1))); \
+	f0 = vld1q_f32(&fbuf[y * n + x]); \
+	f3 = vaddq_f32(vmlsq_f32(f2, f3, f0), vdupq_n_f32(0.5f)); \
+	q0 = vzipq_f32(f0, f0); q1 = vzipq_f32(f3, f3); \
+	M2(v6, y * 2, x) M2(v4, y * 2 + 1, x) \
+	vst1_u8(&out[y * 2 * st + x * 2], vqmovun_s16(v6)); \
+	vst1_u8(&out[y * 2 * st + st + x * 2], vqmovun_s16(v4));
+#define M1(f0, i, low) \
+	f0 = vmlaq_f32(q1.val[i], q0.val[i], vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v5))));
+#define M2(v4, y, x) \
+	v5 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&p1[(y) * stride1 + x * 2]))); \
+	M1(f0, 0, low) M1(f1, 1, high) \
+	v4 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f0)), vmovn_s32(vcvtq_s32_f32(f1)));
+		M3(low, 0) M3(high, 4)
+#undef M3
+#undef M2
+#undef M1
+		}
+#elif 1 && defined(USE_AVX2)
+		for (y = 0; y < y1; y++) {
+			__m128i v0, v1; __m256i v4, v5, v6; __m256 s0, s1, f0, f2, f3;
+			v0 = _mm_loadl_epi64((void*)&image[y * stride]);
+			v1 = _mm_loadl_epi64((void*)&image2[y * stride]);
+			f2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0));
+			f3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v1));
+			s1 = _mm256_loadu_ps(&fbuf[y * n]);
+			f3 = _mm256_sub_ps(f2, _mm256_mul_ps(f3, s1));
+			f3 = _mm256_add_ps(f3, _mm256_set1_ps(0.5f));
+			s1 = _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(s1), 0xd8));
+			f3 = _mm256_castpd_ps(_mm256_permute4x64_pd(_mm256_castps_pd(f3), 0xd8));
+			s0 = _mm256_unpacklo_ps(s1, s1); s1 = _mm256_unpackhi_ps(s1, s1);
+			f2 = _mm256_unpacklo_ps(f3, f3); f3 = _mm256_unpackhi_ps(f3, f3);
+#define M1(v4, s0, f2, v0) \
+	f0 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0)); \
+	v4 = _mm256_cvttps_epi32(_mm256_fmadd_ps(f0, s0, f2));
+#define M2(v4, y) \
+	v0 = _mm_loadu_si128((void*)&p1[(y) * stride1]); \
+	M1(v5, s0, f2, v0) M1(v4, s1, f3, _mm_bsrli_si128(v0, 8)) \
+	v4 = _mm256_packs_epi32(v5, v4);
+			M2(v6, y * 2) M2(v4, y * 2 + 1)
+#undef M2
+#undef M1
+			v4 = _mm256_packus_epi16(v6, v4);
+			v0 = _mm256_castsi256_si128(v4); v1 = _mm256_extractf128_si256(v4, 1);
+			_mm_storeu_si128((void*)&out[y * 2 * st], _mm_unpacklo_epi32(v0, v1));
+			_mm_storeu_si128((void*)&out[y * 2 * st + st], _mm_unpackhi_epi32(v0, v1));
+		}
+#elif 1 && defined(USE_SSE2)
+		for (y = 0; y < y1; y++) {
+			__m128i v0, v1, v4, v5, v6, v7 = _mm_setzero_si128();
+			__m128 s0, s1, f0, f1, f2, f3;
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
+#define M3(lo, x) \
+	f2 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v7)); \
+	f3 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v1, v7)); \
+	s1 = _mm_loadu_ps(&fbuf[y * n + x]); \
+	f3 = _mm_sub_ps(f2, _mm_mul_ps(f3, s1)); \
+	f3 = _mm_add_ps(f3, _mm_set1_ps(0.5f)); \
+	s0 = _mm_unpacklo_ps(s1, s1); s1 = _mm_unpackhi_ps(s1, s1); \
+	f2 = _mm_unpacklo_ps(f3, f3); f3 = _mm_unpackhi_ps(f3, f3); \
+	M2(v6, y * 2, x) M2(v4, y * 2 + 1, x) \
+	v4 = _mm_packus_epi16(v6, v4); \
+	_mm_storel_epi64((void*)&out[y * 2 * st + x * 2], v4); \
+	_mm_storel_epi64((void*)&out[y * 2 * st + st + x * 2], _mm_bsrli_si128(v4, 8));
+#define M1(f0, s0, f2, lo) \
+	f0 = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)), s0), f2);
+#define M2(v4, y, x) \
+	v5 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&p1[(y) * stride1 + x * 2])); \
+	M1(f0, s0, f2, lo) M1(f1, s1, f3, hi) \
+	v4 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f1));
+		M3(lo, 0) M3(hi, 4)
+#undef M3
+#undef M2
+#undef M1
+		}
+#else
+		for (y = 0; y < y1; y++)
+		for (x = 0; x < n; x++) {
+			int a0, a1, a2, a3; float scale = fbuf[y * n + x], offset;
+			offset = image[y * stride + x] - image2[y * stride + x] * scale + 0.5f;
+#define M1(a, xx, yy) \
+	a = p1[(y * hs + yy) * stride1 + x * ws + xx] * scale + offset; \
+	a = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
+			M1(a0, 0, 0) M1(a1, 1, 0) M1(a2, 0, 1) M1(a3, 1, 1)
+#undef M1
+#define M1(a, xx, yy) out[(y * hs + yy) * st + x * ws + xx] = a;
+			M1(a0, 0, 0) M1(a1, 1, 0) M1(a2, 0, 1) M1(a3, 1, 1)
+#undef M1
+		}
+#endif
+		else
+		for (y = 0; y < y1; y++)
+		for (x = 0; x < n; x++) {
+			int xx, yy, a; float scale = fbuf[y * n + x], offset;
+			offset = image[y * stride + x] - image2[y * stride + x] * scale + 0.5f;
+			for (yy = 0; yy < hs; yy++)
+			for (xx = 0; xx < ws; xx++) {
+				a = p1[(y * hs + yy) * stride1 + x * ws + xx] * scale + offset;
+				out[(y * hs + yy) * st + x * ws + xx] = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
+			}
+		}
+	}
+	for (yy = y0 * hs; yy < y1 * hs; yy++) {
+		int x, a = mem[yy * st + w1 * ws - 1];
+		for (x = w1 * ws; x < ww; x++) mem[yy * st + x] = a;
+	}
+}
+
 //#define PRECISE_PROGRESS
 
 #ifndef QS_NAME
@@ -1213,7 +1494,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		} // iter
 
 		if (!stop && image1) {
-			JSAMPLE *mem; int st, w1, h1, ws, hs;
+			JSAMPLE *mem; int st, w1, h1, h2, ws, hs, ww, hh;
 			compptr = srcinfo->comp_info;
 			ws = compptr[0].h_samp_factor;
 			hs = compptr[0].v_samp_factor;
@@ -1234,54 +1515,20 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			}
 #endif
 
-			st = comp_width * DCTSIZE;
-			mem = (JSAMPLE*)malloc(comp_height * DCTSIZE * st * sizeof(JSAMPLE));
+			ww = comp_width * DCTSIZE;
+			hh = comp_height * DCTSIZE;
+			st = ((w1 + DCTSIZE) & -DCTSIZE) * ws;
+			h2 = ((h1 + DCTSIZE) & -DCTSIZE) * hs;
+			mem = (JSAMPLE*)malloc(h2 * st * sizeof(JSAMPLE));
 			if (mem) {
-				int y, ww = comp_width * DCTSIZE, hh = comp_height * DCTSIZE;
+				int y;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-				for (y = 0; y < h1; y++) {
-					int x, xx, yy, a, h2 = hh - y * hs;
-					h2 = h2 < hs ? h2 : hs;
-					for (x = 0; x < w1; x++) {
-						JSAMPLE *p = mem + y * hs * st + x * ws;
-						JSAMPLE *p1 = image1 + (y * hs + 1) * stride1 + x * ws + 1;
-						int w2 = ww - x * ws; 
-						w2 = w2 < ws ? w2 : ws;
-
-						float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
-						float divN = 1.0f / 16, scale, offset; int a;
-#define M1(xx, yy) { \
-	float a = image2[(y + yy + 1) * stride + x + xx + 1]; \
-	float b = image[(y + yy + 1) * stride + x + xx + 1]; \
-	sumA += a; sumAA += a * a; \
-	sumB += b; sumAB += a * b; }
-#define M2 sumA += sumA; sumB += sumB; \
-	sumAA += sumAA; sumAB += sumAB;
-						M1(0, 0) M2
-						M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1) M2
-						M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
-#undef M2
-#undef M1
-						scale = sumAA - sumA * divN * sumA;
-						if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
-						scale = scale < -16.0f ? -16.0f : scale;
-						scale = scale > 16.0f ? 16.0f : scale;
-						// offset = (sumB - scale * sumA) * divN;
-						a = image2[(y + 1) * stride + x + 1];
-						offset = image[(y + 1) * stride + x + 1] - a * scale;
-
-						for (yy = 0; yy < h2; yy++)
-						for (xx = 0; xx < w2; xx++) {
-							a = p1[yy * stride1 + xx] * scale + offset + 0.5f;
-							p[yy * st + xx] = a < 0 ? 0 : a > MAXJSAMPLE ? MAXJSAMPLE : a;
-						}
-					}
-					for (yy = y * hs; yy < y * hs + h2; yy++) {
-						a = mem[yy * st + w1 * ws - 1];
-						for (x = w1 * ws; x < ww; x++) mem[yy * st + x] = a;
-					}
+				for (y = 0; y < h1; y += DCTSIZE) {
+					int y1 = y + DCTSIZE; y1 = y1 < h1 ? y1 : h1;
+					upsample_row(w1, y, y1, image, image2, stride,
+							image1, stride1, mem, st, ww, ws, hs);
 				}
 				for (y = h1 * hs; y < hh; y++)
 					memcpy(mem + y * st, mem + (h1 * hs - 1) * st, st * sizeof(JSAMPLE));
