@@ -30,6 +30,13 @@
 #define omp_get_thread_num() 0
 #endif
 
+#if defined(__clang__) && defined(_OPENMP)
+// Clang (9.0.0) shows this warning about OpenMP loop counter variables,
+// but there is no warnings if OpenMP is disabled,
+// so it look like a bug in the compiler.
+#pragma GCC diagnostic ignored "-Wuninitialized"
+#endif
+
 #if !defined(TRANSCODE_ONLY) && !defined(JPEG_INTERNALS)
 // declarations needed from jpegint.h
 
@@ -175,11 +182,16 @@ static inline float32x4_t NEON_vdivq_f32(float32x4_t a, float32x4_t b) {
 
 static float** quantsmooth_init(int flags) {
 	int i, n = DCTSIZE, nn = n * n, n2 = nn + n * 4;
+#ifdef NO_SIMD
+	intptr_t nalign = 1;
+#else
+	intptr_t nalign = 64;
+#endif
 	float bcoef = flags & JPEGQS_DIAGONALS ? 4.0 : 2.0;
 	int size = flags & JPEGQS_DIAGONALS ? nn * 4 + n * (4 - 2) : nn * 2 + n * 4;
-	float *ptr, **tables = (float**)malloc(nn * sizeof(float*) + nn * size * sizeof(float) + 31);
+	float *ptr, **tables = (float**)malloc(nn * sizeof(float*) + nn * size * sizeof(float) + nalign - 1);
 	if (!tables) return NULL;
-	ptr = (float*)(((intptr_t)&tables[DCTSIZE2] + 31) & -32);
+	ptr = (float*)(((intptr_t)&tables[DCTSIZE2] + nalign - 1) & -nalign);
 	for (i = nn - 1; i >= 0; i--, ptr += size)
 		tables[(int)jpegqs_natural_order[i]] = ptr;
 
@@ -1286,7 +1298,7 @@ static void upsample_row(int w1, int y0, int y1,
 JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts) {
 	JDIMENSION comp_width, comp_height, blk_y;
 	int i, ci, stride, iter, stride1 = 0, need_downsample = 0;
-	jpeg_component_info *compptr;
+	jpeg_component_info *compptr; int64_t size;
 	JQUANT_TBL *qtbl; JSAMPLE *image, *image1 = NULL, *image2 = NULL;
 	int num_iter = opts->niter, old_threads = -1;
 	int prog_next = 0, prog_max = 0, prog_thr = 0, prog_prec = opts->progprec;
@@ -1387,7 +1399,9 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		if (!stop) {
 			// keeping block pointers aligned
 			stride = comp_width * DCTSIZE + 8;
-			image = (JSAMPROW)malloc(((comp_height * DCTSIZE + 2) * stride + 8) * sizeof(JSAMPLE));
+			size = ((int64_t)(comp_height * DCTSIZE + 2) * stride + 8) * sizeof(JSAMPLE);
+			if (size == (int64_t)(size_t)size)
+				image = (JSAMPLE*)malloc(size);
 		}
 		if (!image) {
 #ifdef _OPENMP
@@ -1519,7 +1533,8 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			hh = comp_height * DCTSIZE;
 			st = ((w1 + DCTSIZE) & -DCTSIZE) * ws;
 			h2 = ((h1 + DCTSIZE) & -DCTSIZE) * hs;
-			mem = (JSAMPLE*)malloc(h2 * st * sizeof(JSAMPLE));
+			size = (int64_t)h2 * st * sizeof(JSAMPLE);
+			mem = (JSAMPLE*)(size == (int64_t)(size_t)size ? malloc(size) : NULL);
 			if (mem) {
 				int y;
 #ifdef _OPENMP
@@ -1566,7 +1581,8 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			w = compptr[1].width_in_blocks * DCTSIZE;
 			h = compptr[1].height_in_blocks * DCTSIZE;
 			st = w + 8;
-			image2 = (JSAMPLE*)malloc(((h + 2) * st + 8) * sizeof(JSAMPLE));
+			size = ((int64_t)(h + 2) * st + 8) * sizeof(JSAMPLE);
+			image2 = (JSAMPLE*)(size == (int64_t)(size_t)size ? malloc(size) : NULL);
 			if (!image2) break;
 			image2 += 7;
 
