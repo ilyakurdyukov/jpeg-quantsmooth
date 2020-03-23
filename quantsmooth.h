@@ -378,7 +378,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 }
 
 static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
-		JSAMPLE *image, JSAMPLE *image2, int stride, int flags, float **tables) {
+		JSAMPLE *image, JSAMPLE *image2, int stride, int flags, float **tables, int luma) {
 	int k, n = DCTSIZE, x, y, need_refresh = 1;
 	JSAMPLE ALIGN(32) buf[DCTSIZE2 + DCTSIZE * 6], *border = buf + n * n;
 #ifndef NO_SIMD
@@ -572,7 +572,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		float ALIGN(32) fbuf[DCTSIZE2];
 		float range = 0, c0 = 2, c1 = c0 * sqrtf(0.5f);
 
-		if (image2) return;
+		if (image2) goto end;
 		{
 			int sum = 0;
 			for (x = 1; x < n * n; x++) {
@@ -1004,6 +1004,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		}
 	}
 end:
+	if (flags & JPEGQS_NO_REBALANCE) return;
+	if (!luma && flags & JPEGQS_NO_REBALANCE_UV) return;
 #if 1 && defined(USE_NEON)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
 		JCOEF orig[DCTSIZE2]; int coef0 = coef[0];
@@ -1656,7 +1658,8 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JSAMPLE *p2 = image2 && opts->flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
 					JCOEFPTR coef = buffer[0][blk_x];
-					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride, opts->flags, tables);
+					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride,
+							opts->flags, tables, !ci || srcinfo->jpeg_color_space != JCS_YCbCr);
 				}
 #ifdef PRECISE_PROGRESS
 				if (opts->progress) {
