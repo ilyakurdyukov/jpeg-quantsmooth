@@ -235,7 +235,7 @@ int main(int argc, char **argv) {
 	FILE *output_file = stdout;
 #endif
 
-	int optimize = 0, jpeg_verbose = 0, cmd_info = 15, cmd_cpu = 0;
+	int optimize = 0, jpeg_verbose = 0, cmd_info = 15, cmd_cpu = 0, cmd_copy = 2;
 	int quality = 3, cmd_niter = -1, cmd_flags = -1;
 	jpegqs_control_t opts = { 0 };
 #ifdef _WIN32
@@ -272,7 +272,8 @@ int main(int argc, char **argv) {
 			case 'q': arg = S("--quality"); break;
 			case 't': arg = S("--threads"); break;
 			case 'f': arg = S("--flags"); break;
-			case 'c': arg = S("--cpu"); break;
+			case 'p': arg = S("--cpu"); break;
+			case 'c': arg = S("--copy"); break;
 			default: c = '-';
 		}
 		if (c != '-' && arg1[2]) {
@@ -336,6 +337,10 @@ int main(int argc, char **argv) {
 				CHECKNUM
 				cmd_cpu = atoi(arg2);
 				if (cmd_cpu > JPEGQS_CPU_MASK) cmd_cpu = JPEGQS_CPU_MASK;
+				argv += 2; argc -= 2; arg = NULL;
+			} else if (argc > 2 && !strcmp(arg, "--copy")) {
+				CHECKNUM
+				cmd_copy = atoi(arg2);
 				argv += 2; argc -= 2; arg = NULL;
 			}
 			break;
@@ -479,11 +484,18 @@ int main(int argc, char **argv) {
 		}
 	} else {
 #ifdef USE_SETMODE
-	  setmode(fileno(stdin), O_BINARY);
+		setmode(fileno(stdin), O_BINARY);
 #endif
 	}
 	jpeg_stdio_src(&srcinfo, input_file);
 #endif
+
+	// jcopy_markers_setup
+	if (cmd_copy > 0) jpeg_save_markers(&srcinfo, JPEG_COM, 0xFFFF);
+	if (cmd_copy > 1) {
+		int i;
+		for (i = 0; i < 16; i++) jpeg_save_markers(&srcinfo, JPEG_APP0 + i, 0xFFFF);
+	}
 
 	(void) jpeg_read_header(&srcinfo, TRUE);
 	coef_arrays = jpeg_read_coefficients(&srcinfo);
@@ -509,7 +521,7 @@ int main(int argc, char **argv) {
 		}
 	} else {
 #ifdef USE_SETMODE
-	  setmode(fileno(stdout), O_BINARY);
+		setmode(fileno(stdout), O_BINARY);
 #endif
 	}
 	jpeg_stdio_dest(&dstinfo, output_file);
@@ -517,6 +529,17 @@ int main(int argc, char **argv) {
 
 	/* Start compressor (note no image data is actually written here) */
 	jpeg_write_coefficients(&dstinfo, coef_arrays);
+	// jcopy_markers_execute
+	{
+		jpeg_saved_marker_ptr marker;
+		for (marker = srcinfo.marker_list; marker; marker = marker->next) {
+			if (dstinfo.write_JFIF_header && marker->marker == JPEG_APP0 &&
+				marker->data_length >= 5 && !memcmp(marker->data, "JFIF", 5)) continue;
+			if (dstinfo.write_Adobe_marker && marker->marker == JPEG_APP0 + 14 &&
+				marker->data_length >= 5 && !memcmp(marker->data, "Adobe", 5)) continue;
+			jpeg_write_marker(&dstinfo, marker->marker, marker->data, marker->data_length);
+		}
+	}
 
 	/* Finish compression and release memory */
 	jpeg_finish_compress(&dstinfo);
@@ -541,7 +564,7 @@ int main(int argc, char **argv) {
 		}
 	} else {
 #ifdef USE_SETMODE
-	  setmode(fileno(stdout), O_BINARY);
+		setmode(fileno(stdout), O_BINARY);
 #endif
 	}
 	if (dest_mgr.buffer) {
