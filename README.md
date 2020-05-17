@@ -27,10 +27,10 @@ Without multithreading and SIMD optimizations it runs slower than native code.
 `-o, --optimize` Option for libjpeg to produce smaller output file  
 `-v, --verbose n` Print libjpeg debug output  
 `-i, --info n` Print quantsmooth debug output (default is 15)  
-Use the sum of flags: 0 - silent, 1/2/4 - various information, 8 - processing time, 16 - SIMD type.
+Use the sum of flags: 0 - silent, 1/2/4 - various information, 8 - processing time, 16 - SIMD type.  
 `-p, --cpu n` Use to lower the SIMD type if CPU detection fails:  
 0 - auto, 1 - scalar, 2 - SSE2, 3 - AVX2, 4 - AVX512.
-(`x86` build selects between modes 1-3, `x86_64` from 2-4)
+(`x86` build selects between modes 1-3, `x86_64` from 2-4)  
 
 - The processing time includes only the smoothing algorithm, jpeg reading and writing time is not included.
 - More iterations can make the result look like CG art, can make the photos look unnatural.
