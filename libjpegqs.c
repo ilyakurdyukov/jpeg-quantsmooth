@@ -67,17 +67,19 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		get_cpuid(0, 0, cpuid); m = cpuid[0];
 		if (m < 1) break;
 		get_cpuid(1, 0, cpuid);
+		if (!(cpuid[3] & (1 << 25))) break; // SSE
 		if (!(cpuid[3] & (1 << 26))) break; // SSE2
 		type = 2;
 		// VirtualBox clears FMA, even if AVX2 is set
 		// if (!(cpuid[2] & (1 << 12))) break; // FMA
 		if (!(cpuid[2] & (1 << 27))) break; // OSXSAVE
+		if (!(cpuid[2] & (1 << 28))) break; // AVX
 		xcr0 = ~xgetbv(0);
 		if (m < 7) break;
 		get_cpuid(7, 0, cpuid);
-		if (!(cpuid[1] & (1 << 5)) && xcr0 & 6) break; // AVX2
+		if (!(cpuid[1] & (1 << 5)) || xcr0 & 6) break; // AVX2
 		type = 3;
-		if (!(cpuid[1] & (1 << 16)) && xcr0 & 0xe6) break; // AVX512F
+		if (!(cpuid[1] & (1 << 16)) || xcr0 & 0xe6) break; // AVX512F
 		type = 4;
 	} while (0);
 

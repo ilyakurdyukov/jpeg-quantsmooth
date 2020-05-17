@@ -436,8 +436,13 @@ int main(int argc, char **argv) {
 "  -t, --threads n   Set the number of CPU threads to use\n"
 "  -o, --optimize    Option for libjpeg to produce smaller output file\n"
 "  -v, --verbose n   Print libjpeg debug output\n"
-"  -i, --info n      Print quantsmooth debug output:\n"
-"                      0 - silent, 8 - processing time, 15 - all (default)\n"
+"  -i, --info n      Print quantsmooth debug output (default is 15)\n"
+"                      Use the sum of flags: 0 - silent,\n"
+"                      1/2/4 - various information,\n"
+"                      8 - processing time, 16 - SIMD type.\n"
+"  -p, --cpu n       Use to lower the SIMD type if CPU detection fails:\n"
+"                      0 - auto, 1 - scalar, 2 - SSE2, 3 - AVX2, 4 - AVX512.\n"
+"                      (x86 build selects between modes 1-3, x86_64 from 2-4)\n"
 "\n", progname);
 		return 1;
 	}

@@ -30,13 +30,6 @@
 #define omp_get_thread_num() 0
 #endif
 
-#if defined(__clang__) && defined(_OPENMP)
-// Clang (9.0.0) shows this warning about OpenMP loop counter variables,
-// but there is no warnings if OpenMP is disabled,
-// so it look like a bug in the compiler.
-#pragma GCC diagnostic ignored "-Wuninitialized"
-#endif
-
 #if !defined(TRANSCODE_ONLY) && !defined(JPEG_INTERNALS)
 // declarations needed from jpegint.h
 
