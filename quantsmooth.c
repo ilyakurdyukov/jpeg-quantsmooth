@@ -63,8 +63,8 @@
 
 #ifdef WASM_ASYNC
 EM_JS(void, js_progress, (int percent), {
-	Module["setStatus"]("Processing: (" + percent + "/100)");
-  // Asyncify.handleSleep(function(wakeUp) { setTimeout(wakeUp, 0); });
+	Module["wasm_progress"](percent);
+	// Asyncify.handleSleep(function(wakeUp) { setTimeout(wakeUp, 0); });
 });
 #define PRECISE_PROGRESS
 #define PROGRESS_PTR wasm_progress
@@ -670,7 +670,7 @@ EMSCRIPTEN_KEEPALIVE
 int web_main(int64_t *params) {
 	int ret = web_process(params);
 	EM_ASM(
-	  setTimeout(Module["wasm_return"], 0);
+		setTimeout(Module["wasm_return"], 0);
 	);
 	return ret;
 }
