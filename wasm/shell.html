@@ -86,13 +86,17 @@ window.onerror = function() {
 };
 /*============================================================================*/
 var output_data = null;
+var prm_addr = null;
 
 function cbProcess(input) {
+	loadElement.disabled = true;
+	saveElement.disabled = true;
+	output_data = null;
 	var cmdline = document.getElementById('cmdline').value;
 	var cmd_size = cmdline.length;
 
 	var inp_size = input.byteLength;
-	var prm_addr = Module._malloc(5*8 + inp_size + cmd_size + 1);
+	prm_addr = Module._malloc(5*8 + inp_size + cmd_size + 1);
 	Module.HEAPU8.set(new Uint8Array(5*8), prm_addr);
 	var inp_addr = prm_addr + 5*8;
 	var cmd_addr = prm_addr + 5*8 + inp_size;
@@ -112,18 +116,23 @@ function cbProcess(input) {
 	Module.HEAPU32[prm_addr/4] = cmd_addr;
 	Module.HEAPU32[prm_addr/4 + 1*2] = inp_addr;
 	Module.HEAPU32[prm_addr/4 + 2*2] = inp_size;
-	var ret = Module._web_process(prm_addr);
+	Module._web_main(prm_addr);
+}
+
+Module["wasm_return"] = function() {
 	var out_addr = Module.HEAPU32[prm_addr/4 + 3*2];
 	var out_size = Module.HEAPU32[prm_addr/4 + 4*2];
 
 	Module.print("Output size: " + out_size);
-
 	Module._free(prm_addr);
 	var output = null;
 	if (out_addr) {
 		output = Module.HEAPU8.slice(out_addr, out_addr + out_size);
 		Module._free(out_addr);
+		saveElement.disabled = false;
 	}
+	loadElement.disabled = false;
+	Module.setStatus('');
 	return output;
 }
 
@@ -150,10 +159,7 @@ function readFile(file) {
 	var reader = new FileReader();
 	reader.onload = function(e) {
 		var input_data = e.target.result;
-		saveElement.disabled = true;
-		output_data = null;
-		output_data = cbProcess(input_data);
-		saveElement.disabled = output_data === null;
+		cbProcess(input_data);
 	};
 	reader.readAsArrayBuffer(file);
 }

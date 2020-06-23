@@ -1465,6 +1465,9 @@ static void upsample_row(int w1, int y0, int y1,
 
 //#define PRECISE_PROGRESS
 
+#ifndef PROGRESS_PTR
+#define PROGRESS_PTR opts->progress
+#endif
 #ifndef QS_NAME
 #define QS_NAME do_quantsmooth
 #endif
@@ -1660,7 +1663,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 					if (cur >= prog_thr && omp_get_thread_num() == 0) {
 						cur = (int64_t)prog_prec * cur / prog_max;
 						prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
-						stop = opts->progress(opts->userdata, cur, prog_prec);
+						stop = PROGRESS_PTR(opts->userdata, cur, prog_prec);
 					}
 				}
 #endif
@@ -1674,7 +1677,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				if (cur >= prog_thr) {
 					cur = (int64_t)prog_prec * cur / prog_max;
 					prog_thr = ((int64_t)(cur + 1) * prog_max + prog_prec - 1) / prog_prec;
-					stop = opts->progress(opts->userdata, cur, prog_prec);
+					stop = PROGRESS_PTR(opts->userdata, cur, prog_prec);
 				}
 				if (stop) break;
 			}

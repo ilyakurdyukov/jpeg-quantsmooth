@@ -61,6 +61,21 @@
 
 #define WITH_LOG
 
+#ifdef WASM_ASYNC
+EM_JS(void, js_progress, (int percent), {
+	Module["setStatus"]("Processing: (" + percent + "/100)");
+  // Asyncify.handleSleep(function(wakeUp) { setTimeout(wakeUp, 0); });
+});
+#define PRECISE_PROGRESS
+#define PROGRESS_PTR wasm_progress
+static int wasm_progress(void *data, int cur, int max) {
+	int percent = 100 * cur / max;
+	js_progress(percent);
+	emscripten_sleep(0);
+	return 0;
+}
+#endif
+
 #define TRANSCODE_ONLY
 #ifdef SIMD_SELECT
 #define JPEGQS_ATTR static
@@ -192,8 +207,7 @@ static char** make_argv(char *str, int *argc_ret) {
 	return argv;
 }
 
-EMSCRIPTEN_KEEPALIVE
-int web_process(int64_t *params) {
+static int web_process(int64_t *params) {
 	char *cmdline = (char*)params[0];
 #else
 #ifdef _WIN32
@@ -259,6 +273,11 @@ int main(int argc, char **argv) {
 		if (prog.hwnd) opts.progress = progress;
 		argv += 2; argc -= 2;
 	}
+#endif
+
+#ifdef WASM_ASYNC
+	opts.progprec = 20;
+	opts.progress = wasm_progress;
 #endif
 
 	while (argc > 1) {
@@ -644,6 +663,15 @@ int main(int argc, char **argv) {
 	}
 
 	if (cmdline) free(cmdline);
+	return ret;
+}
+#elif defined(WASM)
+EMSCRIPTEN_KEEPALIVE
+int web_main(int64_t *params) {
+	int ret = web_process(params);
+	EM_ASM(
+	  setTimeout(Module["wasm_return"], 0);
+	);
 	return ret;
 }
 #endif
