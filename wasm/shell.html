@@ -125,15 +125,13 @@ Module["wasm_return"] = function() {
 
 	Module.print("Output size: " + out_size);
 	Module._free(prm_addr);
-	var output = null;
 	if (out_addr) {
-		output = Module.HEAPU8.slice(out_addr, out_addr + out_size);
+		output_data = Module.HEAPU8.slice(out_addr, out_addr + out_size);
 		Module._free(out_addr);
 		saveElement.disabled = false;
 	}
 	loadElement.disabled = false;
 	Module.setStatus('');
-	return output;
 }
 
 function initDrop() {
