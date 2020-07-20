@@ -67,6 +67,15 @@ After processing:<br>
 If your system have *libjpeg* development package installed, just type `make`.
 Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04.
 
+### Building for Linux distribution
+
+Use the `SIMD=select` switch, so that `jpegqs` is compiled for different CPU vector extensions.
+
+*amd64* application: `make SIMD=select MFLAGS="-m64" clean app`  
+*i386* application: `make SIMD=select MFLAGS="-m32 -march=i386" clean app`  
+
+Package dependencies: libc, libjpeg, openmp
+
 ### Building with libjpeg sources
 
 1. Download and extract *libjpeg* sources:
@@ -108,6 +117,17 @@ It will print you link to archive which you need to download, or you can allow t
 Get [MSYS2](https://www.msys2.org/), install needed packages with pacman and build with __release.sh__.
 If you are not familiar with building unix applications on windows, then you can download program from [releases](https://github.com/ilyakurdyukov/jpeg-quantsmooth/releases).
 
+## Use as a library
+
+Can be easily added to other software that uses `libjpeg` to read JPEG images.
+
+1. Find the source that uses `jpeg_start_decompress` and `jpeg_finish_decompress`.
+2. Add include, either `quantsmooth.h` (compile jpegqs as inline) or `libjpegqs.h` (link to the jpegqs library).
+3. Change `jpeg_` to `jpegqs_` for these two functions.
+4. Calling `jpegqs_start_decompress` takes an additional argument with options, see `example.c` for how to use it.
+
+- Build `libjpegqs.a` static library with `make SIMD=select lib`
+
 ## Alternatives and comparison
 
 Similar projects, and how I see them after some testing.
@@ -116,7 +136,7 @@ Similar projects, and how I see them after some testing.
 &nbsp;✔️ good documentation and math model  
 &nbsp;✔️ has tuning options  
 &nbsp;✔️ better at deblocking low quality JPEG images  
-&nbsp;❓ little blurry in default mode (compared to <b>quantsmooth</b>), but can be tuned  
+&nbsp;❓ has an overblurring (`-w 0.0` switch makes the result a little sharper, but doesn't fix it)  
 &nbsp;➖ 10 to 20 times slower  
 &nbsp;➖ less permissive license (GPL-3.0)  
 
