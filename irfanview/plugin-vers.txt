@@ -1,0 +1,8 @@
+/* default */ {
+	global:
+		GetPlugInInfo;
+		LoadJPG;
+
+	local:
+		*;
+};
