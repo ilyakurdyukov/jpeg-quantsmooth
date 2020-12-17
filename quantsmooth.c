@@ -34,10 +34,15 @@
 #if defined(WASM_MAIN) && !defined(WASM)
 #define WASM
 #endif
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "jpeglib.h"
 #ifdef WITH_JPEGSRC
 #include "jversion.h"
+#endif
+#ifdef __cplusplus
+}
 #endif
 
 #ifdef _WIN32

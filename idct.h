@@ -54,8 +54,6 @@ static JSAMPLE range_limit_static[CENTERJSAMPLE * 8];
 #define DESCALE(x,n)  (((x) + (1 << ((n)-1))) >> (n))
 #define RANGE_MASK  (MAXJSAMPLE * 4 + 3) /* 2 bits wider than legal samples */
 
-#define MULTIPLY(var,const) ((var) * (const))
-
 static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) {
 
 #define M3 \
@@ -129,7 +127,7 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
-#define M1(i) vmovl_s16(vld1_s16((void*)&coef_block[DCTSIZE*i+ctr]))
+#define M1(i) vmovl_s16(vld1_s16((int16_t*)&coef_block[DCTSIZE*i+ctr]))
 #define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = vrshrq_n_s32(tmp, CONST_BITS-PASS1_BITS);
 		M3
 #undef M1
@@ -178,7 +176,7 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 #define SET1 _mm256_set1_epi32
 #define SHL _mm256_slli_epi32
 
-#define M1(i) _mm256_cvtepi16_epi32(_mm_loadu_si128((void*)&coef_block[DCTSIZE*i]))
+#define M1(i) _mm256_cvtepi16_epi32(_mm_loadu_si128((__m128i*)&coef_block[DCTSIZE*i]))
 #define M2(i, tmp) x##i = _mm256_srai_epi32(ADD(tmp, t0), CONST_BITS-PASS1_BITS);
 	t0 = SET1(1 << (CONST_BITS-PASS1_BITS-1));
 	M3
@@ -259,7 +257,7 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 	t0 = _mm_set1_epi32(1 << (CONST_BITS-PASS1_BITS-1));
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
-#define M1(i) _mm_cvtepi16_epi32(_mm_loadl_epi64((void*)&coef_block[DCTSIZE*i+ctr]))
+#define M1(i) _mm_cvtepi16_epi32(_mm_loadl_epi64((__m128i*)&coef_block[DCTSIZE*i+ctr]))
 #define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = _mm_srai_epi32(ADD(tmp, t0), CONST_BITS-PASS1_BITS);
 		M3
 #undef M1

@@ -279,8 +279,8 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y += 2) {
 		__m256i v0, v1, v2, v3; __m512 f0, f1;
-		v1 = _mm256_loadu_si256((void*)&quantval[y * n]);
-		v0 = _mm256_loadu_si256((void*)&coef[y * n]);
+		v1 = _mm256_loadu_si256((__m256i*)&quantval[y * n]);
+		v0 = _mm256_loadu_si256((__m256i*)&coef[y * n]);
 		v2 = _mm256_srli_epi16(v1, 1); v3 = _mm256_srai_epi16(v0, 15);
 		v2 = _mm256_xor_si256(_mm256_add_epi16(v2, v3), v3);
 		v0 = _mm256_add_epi16(v0, v2);
@@ -299,14 +299,14 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v2 = _mm256_min_epi16(v2, _mm256_add_epi16(v0, _mm256_srai_epi16(v3, 1)));
 		v3 = _mm256_sub_epi16(v1, _mm256_cmpgt_epi16(v0, _mm256_setzero_si256()));
 		v2 = _mm256_max_epi16(v2, _mm256_sub_epi16(v0, _mm256_srai_epi16(v3, 1)));
-		_mm256_storeu_si256((void*)&coef[y * n], v2);
+		_mm256_storeu_si256((__m256i*)&coef[y * n], v2);
 	} else
 #elif 1 && defined(USE_AVX2)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
 		__m128i v0, v1, v2, v3; __m256i v4, v5; __m256 f0, f1;
-		v1 = _mm_loadu_si128((void*)&quantval[y * n]);
-		v0 = _mm_loadu_si128((void*)&coef[y * n]);
+		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
+		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
 		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 		v0 = _mm_add_epi16(v0, v2);
@@ -324,20 +324,20 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v2 = _mm_min_epi16(v2, _mm_add_epi16(v0, _mm_srai_epi16(v3, 1)));
 		v3 = _mm_sub_epi16(v1, _mm_cmpgt_epi16(v0, _mm_setzero_si128()));
 		v2 = _mm_max_epi16(v2, _mm_sub_epi16(v0, _mm_srai_epi16(v3, 1)));
-		_mm_storeu_si128((void*)&coef[y * n], v2);
+		_mm_storeu_si128((__m128i*)&coef[y * n], v2);
 	} else
 #elif 1 && defined(USE_SSE2)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
 		__m128i v0, v1, v2, v3; __m128 f0, f1, f2, f3, f4;
-		v1 = _mm_loadu_si128((void*)&quantval[y * n]);
-		v0 = _mm_loadu_si128((void*)&coef[y * n]);
+		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
+		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
 		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 		v0 = _mm_add_epi16(v0, v2);
 		v2 = _mm_setzero_si128(); v3 = _mm_srai_epi16(v0, 15);
 #define M1(lo, f0, f1, x) \
-	f0 = _mm_loadu_ps((void*)&buf[y * n + x]); \
+	f0 = _mm_loadu_ps((float*)&buf[y * n + x]); \
 	f4 = _mm_cmplt_ps(f0, _mm_setzero_ps()); \
 	f4 = _mm_castsi128_ps(_mm_slli_epi32(_mm_castps_si128(f4), 31)); \
 	f0 = _mm_add_ps(f0, _mm_or_ps(f4, _mm_set1_ps(0.5f))); \
@@ -354,7 +354,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v2 = _mm_min_epi16(v2, _mm_add_epi16(v0, _mm_srai_epi16(v3, 1)));
 		v3 = _mm_sub_epi16(v1, _mm_cmpgt_epi16(v0, _mm_setzero_si128()));
 		v2 = _mm_max_epi16(v2, _mm_sub_epi16(v0, _mm_srai_epi16(v3, 1)));
-		_mm_storeu_si128((void*)&coef[y * n], v2);
+		_mm_storeu_si128((__m128i*)&coef[y * n], v2);
 	} else
 #endif
 	for (x = 0; x < n * n; x++) {
@@ -436,18 +436,18 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
 			__m256 v5, scale;
 #define M1(x0, y0, x1, y1) \
-	v0 = _mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0]); \
-	v1 = _mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1]); \
+	v0 = _mm_loadl_epi64((__m128i*)&image2[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((__m128i*)&image2[(y + y1) * stride + x1]); \
 	v2 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
-	v0 = _mm_loadl_epi64((void*)&image[(y + y0) * stride + x0]); \
-	v1 = _mm_loadl_epi64((void*)&image[(y + y1) * stride + x1]); \
+	v0 = _mm_loadl_epi64((__m128i*)&image[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((__m128i*)&image[(y + y1) * stride + x1]); \
 	v3 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
 	sumA = _mm256_add_epi16(sumA, v2); \
 	sumB = _mm256_add_epi16(sumB, v3); \
 	sumAA = _mm256_add_epi32(sumAA, _mm256_madd_epi16(v2, v2)); \
 	sumAB = _mm256_add_epi32(sumAB, _mm256_madd_epi16(v2, v3));
-			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
-			v1 = _mm_loadl_epi64((void*)&image[y * stride]);
+			v0 = _mm_loadl_epi64((__m128i*)&image2[y * stride]);
+			v1 = _mm_loadl_epi64((__m128i*)&image[y * stride]);
 			sumA = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v0));
 			sumB = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v1, v1));
 			sumAA = _mm256_madd_epi16(sumA, sumA);
@@ -468,7 +468,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			scale = _mm256_div_ps(_mm256_cvtepi32_ps(sumAB), scale);
 			scale = _mm256_max_ps(scale, _mm256_set1_ps(-16.0f));
 			scale = _mm256_min_ps(scale, _mm256_set1_ps(16.0f));
-			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
+			v0 = _mm_loadl_epi64((__m128i*)&image2[y * stride]);
 			v4 = _mm256_slli_epi32(_mm256_cvtepu8_epi32(v0), 4);
 			v5 = _mm256_cvtepi32_ps(_mm256_sub_epi32(v4, v2));
 			// v5 = _mm256_add_ps(_mm256_mul_ps(v5, scale), _mm256_cvtepi32_ps(v3));
@@ -484,18 +484,18 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			__m128i v0, v1, v2, v3, v4, sumA, sumB, sumAA1, sumAB1, sumAA2, sumAB2;
 			__m128 v5, scale;
 #define M1(x0, y0, x1, y1) \
-	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0])); \
-	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1])); \
-	v2 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y0) * stride + x0])); \
-	v3 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y1) * stride + x1])); \
+	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[(y + y0) * stride + x0])); \
+	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[(y + y1) * stride + x1])); \
+	v2 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y + y0) * stride + x0])); \
+	v3 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y + y1) * stride + x1])); \
 	sumA = _mm_add_epi16(_mm_add_epi16(sumA, v0), v1); \
 	sumB = _mm_add_epi16(_mm_add_epi16(sumB, v2), v3); \
 	v4 = _mm_unpacklo_epi16(v0, v1); sumAA1 = _mm_add_epi32(sumAA1, _mm_madd_epi16(v4, v4)); \
 	v1 = _mm_unpackhi_epi16(v0, v1); sumAA2 = _mm_add_epi32(sumAA2, _mm_madd_epi16(v1, v1)); \
 	sumAB1 = _mm_add_epi32(sumAB1, _mm_madd_epi16(v4, _mm_unpacklo_epi16(v2, v3))); \
 	sumAB2 = _mm_add_epi32(sumAB2, _mm_madd_epi16(v1, _mm_unpackhi_epi16(v2, v3)));
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
-			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[y * stride]));
 			v2 = _mm_unpacklo_epi16(v0, v0); sumAA1 = _mm_madd_epi16(v2, v2);
 			v3 = _mm_unpacklo_epi16(v1, v1); sumAB1 = _mm_madd_epi16(v2, v3);
 			v2 = _mm_unpackhi_epi16(v0, v0); sumAA2 = _mm_madd_epi16(v2, v2);
@@ -508,7 +508,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			M1(-1, -1, 1, -1) M1(-1, 1, 1, 1)
 #undef M1
 			v0 = _mm_setzero_si128();
-			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[y * stride]));
 #define M1(lo, sumAA, sumAB, x)  \
 	v2 = _mm_unpack##lo##_epi16(sumA, v0); sumAA = _mm_slli_epi32(sumAA, 4); \
 	v3 = _mm_unpack##lo##_epi16(sumB, v0); sumAB = _mm_slli_epi32(sumAB, 4); \
@@ -618,8 +618,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			f4 = _mm512_set1_ps(c0); f5 = _mm512_set1_ps(c1);
 #define M2(v0, pos) \
 	v0 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi64( \
-			_mm_loadl_epi64((void*)&image[pos]), \
-			_mm_loadl_epi64((void*)&image[pos + stride])));
+			_mm_loadl_epi64((__m128i*)&image[pos]), \
+			_mm_loadl_epi64((__m128i*)&image[pos + stride])));
 #define M1(f4, x, y) M2(v1, (y) * stride + x) \
 	v4 = _mm256_sub_epi16(v0, v1); v5 = _mm256_subs_epu16(v6, _mm256_abs_epi16(v4)); \
 	f0 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v5)); \
@@ -645,9 +645,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			__m128i v0, v1, v4, v5, v6 = _mm_set1_epi16((int)range);
 			__m256 f0, f1, f4, f5, s0 = _mm256_setzero_ps(), s1 = s0;
 			f4 = _mm256_set1_ps(c0); f5 = _mm256_set1_ps(c1);
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[y * stride]));
 #define M1(f4, x, y) \
-	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y) * stride + x])); \
+	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y) * stride + x])); \
 	v4 = _mm_sub_epi16(v0, v1); v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v4)); \
 	f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v5)); \
 	f0 = _mm256_mul_ps(f0, f0); f1 = _mm256_mul_ps(f0, f4); \
@@ -670,9 +670,9 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			__m128i v0, v1, v3, v4, v5, v6 = _mm_set1_epi16((int)range), v7 = _mm_setzero_si128();
 			__m128 f0, f1, f4, f5, s0 = _mm_setzero_ps(), s1 = s0, s2 = s0, s3 = s0;
 			f4 = _mm_set1_ps(c0); f5 = _mm_set1_ps(c1);
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[y * stride]));
 #define M1(f4, x, y) \
-	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y) * stride + x])); \
+	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y) * stride + x])); \
 	v4 = _mm_sub_epi16(v0, v1); v3 = _mm_srai_epi16(v4, 15); \
 	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v4)); \
 	M2(lo, s0, s1, f4) M2(hi, s2, s3, f4)
@@ -756,7 +756,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	__m512 f0, f1, f4, s0 = _mm512_setzero_ps(), s1 = s0;
 
 #define VCORE \
-	v4 = _mm256_loadu_si256((void*)&temp[y * n]); \
+	v4 = _mm256_loadu_si256((__m256i*)&temp[y * n]); \
 	f4 = _mm512_load_ps(tab + y * n); \
 	v5 = _mm256_subs_epu16(v6, _mm256_abs_epi16(v4)); \
 	f0 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v5)); \
@@ -784,7 +784,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	__m256 f0, f1, f4, s0 = _mm256_setzero_ps(), s1 = s0;
 
 #define VCORE \
-	v4 = _mm_loadu_si128((void*)&temp[y * n]); \
+	v4 = _mm_loadu_si128((__m128i*)&temp[y * n]); \
 	f4 = _mm256_load_ps(tab + y * n); \
 	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v4)); \
 	f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v5)); \
@@ -807,7 +807,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	__m128 f0, f1, s0 = _mm_setzero_ps(), s1 = s0, s2 = s0, s3 = s0;
 
 #define VCORE \
-	v4 = _mm_loadu_si128((void*)&temp[y * n]); \
+	v4 = _mm_loadu_si128((__m128i*)&temp[y * n]); \
 	v3 = _mm_srai_epi16(v4, 15); \
 	v5 = _mm_subs_epu16(v6, _mm_abs_epi16(v4)); \
 	VCORE1(lo, s0, s1, tab) VCORE1(hi, s2, s3, tab + 4)
@@ -874,8 +874,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #ifndef VINITD
 // same for SSE2, AVX2, AVX512
 #define VINITD __m128i v0, v1, v2;
-#define VDIFF(i) _mm_storeu_si128((void*)&temp[(i) * n], _mm_sub_epi16(v0, v1));
-#define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)(p)));
+#define VDIFF(i) _mm_storeu_si128((__m128i*)&temp[(i) * n], _mm_sub_epi16(v0, v1));
+#define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)(p)));
 #define VRIGHT(a, b) v##a = _mm_bsrli_si128(v##b, 2);
 #define VCOPY(a, b) v##a = v##b;
 #endif
@@ -1057,8 +1057,8 @@ end:
 		coef[0] = 0;
 		for (k = 0; k < DCTSIZE2; k += 8) {
 			__m128i v0, v1, v2, v3; __m256i v4; __m256 f0;
-			v1 = _mm_loadu_si128((void*)&quantval[k]);
-			v0 = _mm_loadu_si128((void*)&coef[k]);
+			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
+			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
 			v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 			v2 = _mm_add_epi16(v0, v2);
@@ -1067,7 +1067,7 @@ end:
 			v4 = _mm256_cvttps_epi32(f0);
 			v2 = _mm_packs_epi32(_mm256_castsi256_si128(v4), _mm256_extractf128_si256(v4, 1));
 			v2 = _mm_mullo_epi16(v2, v1);
-			_mm_storeu_si128((void*)&orig[k], v2);
+			_mm_storeu_si128((__m128i*)&orig[k], v2);
 			s0 = _mm_add_epi32(s0, _mm_madd_epi16(v0, v2));
 			s1 = _mm_add_epi32(s1, _mm_madd_epi16(v2, v2));
 		}
@@ -1078,16 +1078,16 @@ end:
 			__m256i v4 = _mm256_set1_epi16(mul);
 			for (k = 0; k < DCTSIZE2; k += 16) {
 				__m256i v0, v1, v2, v3;
-				v1 = _mm256_loadu_si256((void*)&quantval[k]);
-				v2 = _mm256_loadu_si256((void*)&coef[k]);
+				v1 = _mm256_loadu_si256((__m256i*)&quantval[k]);
+				v2 = _mm256_loadu_si256((__m256i*)&coef[k]);
 				v2 = _mm256_mulhrs_epi16(_mm256_slli_epi16(v2, 2), v4);
-				v0 = _mm256_loadu_si256((void*)&orig[k]);
+				v0 = _mm256_loadu_si256((__m256i*)&orig[k]);
 				v1 = _mm256_add_epi16(v1, _mm256_set1_epi16(-1));
 				v3 = _mm256_sub_epi16(v1, _mm256_srai_epi16(v0, 15));
 				v2 = _mm256_min_epi16(v2, _mm256_add_epi16(v0, _mm256_srai_epi16(v3, 1)));
 				v3 = _mm256_sub_epi16(v1, _mm256_cmpgt_epi16(v0, _mm256_setzero_si256()));
 				v2 = _mm256_max_epi16(v2, _mm256_sub_epi16(v0, _mm256_srai_epi16(v3, 1)));
-				_mm256_storeu_si256((void*)&coef[k], v2);
+				_mm256_storeu_si256((__m256i*)&coef[k], v2);
 			}
 		}
 		coef[0] = coef0;
@@ -1099,8 +1099,8 @@ end:
 		coef[0] = 0;
 		for (k = 0; k < DCTSIZE2; k += 8) {
 			__m128i v0, v1, v2, v3, v7; __m128 f0, f2, f4;
-			v1 = _mm_loadu_si128((void*)&quantval[k]);
-			v0 = _mm_loadu_si128((void*)&coef[k]);
+			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
+			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
 			v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 			v2 = _mm_add_epi16(v0, v2);
@@ -1113,7 +1113,7 @@ end:
 #undef M1
 			v2 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f2));
 			v2 = _mm_mullo_epi16(v2, v1);
-			_mm_storeu_si128((void*)&orig[k], v2);
+			_mm_storeu_si128((__m128i*)&orig[k], v2);
 			s0 = _mm_add_epi32(s0, _mm_madd_epi16(v0, v2));
 			s1 = _mm_add_epi32(s1, _mm_madd_epi16(v2, v2));
 		}
@@ -1130,21 +1130,21 @@ end:
 			__m128i v4 = _mm_set1_epi16(mul);
 			for (k = 0; k < DCTSIZE2; k += 8) {
 				__m128i v0, v1, v2, v3 = _mm_set1_epi16(-1);
-				v1 = _mm_loadu_si128((void*)&quantval[k]);
-				v2 = _mm_loadu_si128((void*)&coef[k]);
+				v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
+				v2 = _mm_loadu_si128((__m128i*)&coef[k]);
 #ifdef USE_SSE4
 				v2 = _mm_mulhrs_epi16(_mm_slli_epi16(v2, 2), v4);
 #else
 				v2 = _mm_mulhi_epi16(_mm_slli_epi16(v2, 4), v4);
 				v2 = _mm_srai_epi16(_mm_sub_epi16(v2, v3), 1);
 #endif
-				v0 = _mm_loadu_si128((void*)&orig[k]);
+				v0 = _mm_loadu_si128((__m128i*)&orig[k]);
 				v1 = _mm_add_epi16(v1, v3);
 				v3 = _mm_sub_epi16(v1, _mm_srai_epi16(v0, 15));
 				v2 = _mm_min_epi16(v2, _mm_add_epi16(v0, _mm_srai_epi16(v3, 1)));
 				v3 = _mm_sub_epi16(v1, _mm_cmpgt_epi16(v0, _mm_setzero_si128()));
 				v2 = _mm_max_epi16(v2, _mm_sub_epi16(v0, _mm_srai_epi16(v3, 1)));
-				_mm_storeu_si128((void*)&coef[k], v2);
+				_mm_storeu_si128((__m128i*)&coef[k], v2);
 			}
 		}
 		coef[0] = coef0;
@@ -1239,18 +1239,18 @@ static void upsample_row(int w1, int y0, int y1,
 			__m128i v0, v1; __m256i v2, v3, v4, sumA, sumB, sumAA, sumAB;
 			__m256 v5, scale;
 #define M1(x0, y0, x1, y1) \
-	v0 = _mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0]); \
-	v1 = _mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1]); \
+	v0 = _mm_loadl_epi64((__m128i*)&image2[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((__m128i*)&image2[(y + y1) * stride + x1]); \
 	v2 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
-	v0 = _mm_loadl_epi64((void*)&image[(y + y0) * stride + x0]); \
-	v1 = _mm_loadl_epi64((void*)&image[(y + y1) * stride + x1]); \
+	v0 = _mm_loadl_epi64((__m128i*)&image[(y + y0) * stride + x0]); \
+	v1 = _mm_loadl_epi64((__m128i*)&image[(y + y1) * stride + x1]); \
 	v3 = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v1)); \
 	sumA = _mm256_add_epi16(sumA, v2); \
 	sumB = _mm256_add_epi16(sumB, v3); \
 	sumAA = _mm256_add_epi32(sumAA, _mm256_madd_epi16(v2, v2)); \
 	sumAB = _mm256_add_epi32(sumAB, _mm256_madd_epi16(v2, v3));
-			v0 = _mm_loadl_epi64((void*)&image2[y * stride]);
-			v1 = _mm_loadl_epi64((void*)&image[y * stride]);
+			v0 = _mm_loadl_epi64((__m128i*)&image2[y * stride]);
+			v1 = _mm_loadl_epi64((__m128i*)&image[y * stride]);
 			sumA = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v0, v0));
 			sumB = _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(v1, v1));
 			sumAA = _mm256_madd_epi16(sumA, sumA);
@@ -1279,18 +1279,18 @@ static void upsample_row(int w1, int y0, int y1,
 			__m128i v0, v1, v2, v3, v4, sumA, sumB, sumAA1, sumAB1, sumAA2, sumAB2;
 			__m128 v5, scale;
 #define M1(x0, y0, x1, y1) \
-	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y0) * stride + x0])); \
-	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[(y + y1) * stride + x1])); \
-	v2 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y0) * stride + x0])); \
-	v3 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[(y + y1) * stride + x1])); \
+	v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[(y + y0) * stride + x0])); \
+	v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[(y + y1) * stride + x1])); \
+	v2 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y + y0) * stride + x0])); \
+	v3 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[(y + y1) * stride + x1])); \
 	sumA = _mm_add_epi16(_mm_add_epi16(sumA, v0), v1); \
 	sumB = _mm_add_epi16(_mm_add_epi16(sumB, v2), v3); \
 	v4 = _mm_unpacklo_epi16(v0, v1); sumAA1 = _mm_add_epi32(sumAA1, _mm_madd_epi16(v4, v4)); \
 	v1 = _mm_unpackhi_epi16(v0, v1); sumAA2 = _mm_add_epi32(sumAA2, _mm_madd_epi16(v1, v1)); \
 	sumAB1 = _mm_add_epi32(sumAB1, _mm_madd_epi16(v4, _mm_unpacklo_epi16(v2, v3))); \
 	sumAB2 = _mm_add_epi32(sumAB2, _mm_madd_epi16(v1, _mm_unpackhi_epi16(v2, v3)));
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
-			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[y * stride]));
 			v2 = _mm_unpacklo_epi16(v0, v0); sumAA1 = _mm_madd_epi16(v2, v2);
 			v3 = _mm_unpacklo_epi16(v1, v1); sumAB1 = _mm_madd_epi16(v2, v3);
 			v2 = _mm_unpackhi_epi16(v0, v0); sumAA2 = _mm_madd_epi16(v2, v2);
@@ -1375,8 +1375,8 @@ static void upsample_row(int w1, int y0, int y1,
 #elif 1 && defined(USE_AVX2)
 		for (y = 0; y < y1; y++) {
 			__m128i v0, v1; __m256i v4, v5, v6; __m256 s0, s1, f0, f2, f3;
-			v0 = _mm_loadl_epi64((void*)&image[y * stride]);
-			v1 = _mm_loadl_epi64((void*)&image2[y * stride]);
+			v0 = _mm_loadl_epi64((__m128i*)&image[y * stride]);
+			v1 = _mm_loadl_epi64((__m128i*)&image2[y * stride]);
 			f2 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0));
 			f3 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v1));
 			s1 = _mm256_loadu_ps(&fbuf[y * n]);
@@ -1390,7 +1390,7 @@ static void upsample_row(int w1, int y0, int y1,
 	f0 = _mm256_cvtepi32_ps(_mm256_cvtepu8_epi32(v0)); \
 	v4 = _mm256_cvttps_epi32(_mm256_fmadd_ps(f0, s0, f2));
 #define M2(v4, y) \
-	v0 = _mm_loadu_si128((void*)&p1[(y) * stride1]); \
+	v0 = _mm_loadu_si128((__m128i*)&p1[(y) * stride1]); \
 	M1(v5, s0, f2, v0) M1(v4, s1, f3, _mm_bsrli_si128(v0, 8)) \
 	v4 = _mm256_packs_epi32(v5, v4);
 			M2(v6, y * 2) M2(v4, y * 2 + 1)
@@ -1398,15 +1398,15 @@ static void upsample_row(int w1, int y0, int y1,
 #undef M1
 			v4 = _mm256_packus_epi16(v6, v4);
 			v0 = _mm256_castsi256_si128(v4); v1 = _mm256_extractf128_si256(v4, 1);
-			_mm_storeu_si128((void*)&out[y * 2 * st], _mm_unpacklo_epi32(v0, v1));
-			_mm_storeu_si128((void*)&out[y * 2 * st + st], _mm_unpackhi_epi32(v0, v1));
+			_mm_storeu_si128((__m128i*)&out[y * 2 * st], _mm_unpacklo_epi32(v0, v1));
+			_mm_storeu_si128((__m128i*)&out[y * 2 * st + st], _mm_unpackhi_epi32(v0, v1));
 		}
 #elif 1 && defined(USE_SSE2)
 		for (y = 0; y < y1; y++) {
 			__m128i v0, v1, v4, v5, v6, v7 = _mm_setzero_si128();
 			__m128 s0, s1, f0, f1, f2, f3;
-			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image[y * stride]));
-			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&image2[y * stride]));
+			v0 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image[y * stride]));
+			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[y * stride]));
 #define M3(lo, x) \
 	f2 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v7)); \
 	f3 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v1, v7)); \
@@ -1417,12 +1417,12 @@ static void upsample_row(int w1, int y0, int y1,
 	f2 = _mm_unpacklo_ps(f3, f3); f3 = _mm_unpackhi_ps(f3, f3); \
 	M2(v6, y * 2, x) M2(v4, y * 2 + 1, x) \
 	v4 = _mm_packus_epi16(v6, v4); \
-	_mm_storel_epi64((void*)&out[y * 2 * st + x * 2], v4); \
-	_mm_storel_epi64((void*)&out[y * 2 * st + st + x * 2], _mm_bsrli_si128(v4, 8));
+	_mm_storel_epi64((__m128i*)&out[y * 2 * st + x * 2], v4); \
+	_mm_storel_epi64((__m128i*)&out[y * 2 * st + st + x * 2], _mm_bsrli_si128(v4, 8));
 #define M1(f0, s0, f2, lo) \
 	f0 = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v5, v7)), s0), f2);
 #define M2(v4, y, x) \
-	v5 = _mm_cvtepu8_epi16(_mm_loadl_epi64((void*)&p1[(y) * stride1 + x * 2])); \
+	v5 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&p1[(y) * stride1 + x * 2])); \
 	M1(f0, s0, f2, lo) M1(f1, s1, f3, hi) \
 	v4 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f1));
 		M3(lo, 0) M3(hi, 4)
