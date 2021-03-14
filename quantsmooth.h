@@ -42,14 +42,14 @@ EXTERN(void) jinit_upsampler(j_decompress_ptr);
 EXTERN(void) jinit_color_deconverter(j_decompress_ptr);
 
 struct jpeg_decomp_master {
-  void (*prepare_for_output_pass) (j_decompress_ptr);
-  void (*finish_output_pass) (j_decompress_ptr);
-  boolean is_dummy_pass;
+	void (*prepare_for_output_pass) (j_decompress_ptr);
+	void (*finish_output_pass) (j_decompress_ptr);
+	boolean is_dummy_pass;
 #ifdef LIBJPEG_TURBO_VERSION
-  JDIMENSION first_iMCU_col, last_iMCU_col;
-  JDIMENSION first_MCU_col[MAX_COMPONENTS];
-  JDIMENSION last_MCU_col[MAX_COMPONENTS];
-  boolean jinit_upsampler_no_alloc;
+	JDIMENSION first_iMCU_col, last_iMCU_col;
+	JDIMENSION first_MCU_col[MAX_COMPONENTS];
+	JDIMENSION last_MCU_col[MAX_COMPONENTS];
+	boolean jinit_upsampler_no_alloc;
 #endif
 };
 #endif
@@ -152,7 +152,7 @@ X(-Wsequence-point) X(-Wstrict-aliasing)
 #ifdef USE_NEON
 #if 1 && defined(__SSE2__)
 #define vdivq_f32 _mm_div_ps
-#else
+#elif !defined(__aarch64__)
 static inline float32x4_t NEON_vdivq_f32(float32x4_t a, float32x4_t b) {
 	float32x4_t t = vrecpeq_f32(b);
 	t = vmulq_f32(t, vrecpsq_f32(b, t));
@@ -387,43 +387,48 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		float ALIGN(32) fbuf[DCTSIZE2];
 #if 1 && defined(USE_NEON)
 		for (y = 0; y < n; y++) {
-			int16x8_t v0, v1, sumA, sumB; float32x4_t v5, scale;
-			int32x4_t v2, v3, v4, sumAA1, sumAB1, sumAA2, sumAB2;
+			uint8x8_t h0, h1; uint16x8_t sumA, sumB, v0, v1;
+			uint16x4_t h2, h3; float32x4_t v5, scale;
+			uint32x4_t v4, sumAA1, sumAB1, sumAA2, sumAB2;
 #define M1(xx, yy) \
-	v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[(y + yy) * stride + xx]))); \
-	v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[(y + yy) * stride + xx]))); \
-	sumA = vaddq_s16(sumA, v0); sumB = vaddq_s16(sumB, v1); \
-	v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmlaq_s32(sumAA1, v2, v2); \
-	v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmlaq_s32(sumAB1, v2, v3); \
-	v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmlaq_s32(sumAA2, v2, v2); \
-	v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmlaq_s32(sumAB2, v2, v3);
+	h0 = vld1_u8(&image2[(y + yy) * stride + xx]); \
+	h1 = vld1_u8(&image[(y + yy) * stride + xx]); \
+	sumA = vaddw_u8(sumA, h0); v0 = vmull_u8(h0, h0); \
+	sumB = vaddw_u8(sumB, h1); v1 = vmull_u8(h0, h1); \
+	sumAA1 = vaddw_u16(sumAA1, vget_low_u16(v0)); \
+	sumAB1 = vaddw_u16(sumAB1, vget_low_u16(v1)); \
+	sumAA2 = vaddw_u16(sumAA2, vget_high_u16(v0)); \
+	sumAB2 = vaddw_u16(sumAB2, vget_high_u16(v1));
 #define M2 \
-	sumA = vaddq_s16(sumA, sumA); sumB = vaddq_s16(sumB, sumB); \
-	sumAA1 = vaddq_s32(sumAA1, sumAA1); sumAA2 = vaddq_s32(sumAA2, sumAA2); \
-	sumAB1 = vaddq_s32(sumAB1, sumAB1); sumAB2 = vaddq_s32(sumAB2, sumAB2);
-			sumA = v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
-			sumB = v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[y * stride])));
-			v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmulq_s32(v2, v2);
-			v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmulq_s32(v2, v3);
-			v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmulq_s32(v2, v2);
-			v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmulq_s32(v2, v3);
+	sumA = vaddq_u16(sumA, sumA); sumB = vaddq_u16(sumB, sumB); \
+	sumAA1 = vaddq_u32(sumAA1, sumAA1); sumAA2 = vaddq_u32(sumAA2, sumAA2); \
+	sumAB1 = vaddq_u32(sumAB1, sumAB1); sumAB2 = vaddq_u32(sumAB2, sumAB2);
+			h0 = vld1_u8(&image2[y * stride]);
+			h1 = vld1_u8(&image[y * stride]);
+			sumA = vmovl_u8(h0); v0 = vmull_u8(h0, h0);
+			sumB = vmovl_u8(h1); v1 = vmull_u8(h0, h1);
+			sumAA1 = vmovl_u16(vget_low_u16(v0));
+			sumAB1 = vmovl_u16(vget_low_u16(v1));
+			sumAA2 = vmovl_u16(vget_high_u16(v0));
+			sumAB2 = vmovl_u16(vget_high_u16(v1));
 			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
 			M2 M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
-			v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
-#define M1(low, sumAA, sumAB, x)  \
-	v2 = vmovl_s16(vget_##low##_s16(sumA)); sumAA = vshlq_n_s32(sumAA, 4); \
-	v3 = vmovl_s16(vget_##low##_s16(sumB)); sumAB = vshlq_n_s32(sumAB, 4); \
-	sumAA = vmlsq_s32(sumAA, v2, v2); sumAB = vmlsq_s32(sumAB, v2, v3); \
-	v4 = vreinterpretq_s32_u32(vtstq_s32(sumAA, sumAA)); \
-	sumAB = vandq_s32(sumAB, v4); sumAA = vornq_s32(sumAA, v4); \
-	scale = vdivq_f32(vcvtq_f32_s32(sumAB), vcvtq_f32_s32(sumAA)); \
+			v0 = vmovl_u8(vld1_u8(&image2[y * stride]));
+#define M1(low, sumAA, sumAB, x) \
+	h2 = vget_##low##_u16(sumA); sumAA = vshlq_n_u32(sumAA, 4); \
+	h3 = vget_##low##_u16(sumB); sumAB = vshlq_n_u32(sumAB, 4); \
+	sumAA = vmlsl_u16(sumAA, h2, h2); sumAB = vmlsl_u16(sumAB, h2, h3); \
+	v4 = vtstq_u32(sumAA, sumAA); \
+	sumAB = vandq_u32(sumAB, v4); sumAA = vornq_u32(sumAA, v4); \
+	scale = vdivq_f32(vcvtq_f32_s32(vreinterpretq_s32_u32(sumAB)), \
+			vcvtq_f32_s32(vreinterpretq_s32_u32(sumAA))); \
 	scale = vmaxq_f32(scale, vdupq_n_f32(-16.0f)); \
 	scale = vminq_f32(scale, vdupq_n_f32(16.0f)); \
-	v4 = vshll_n_s16(vget_##low##_s16(v1), 4); \
-	v5 = vcvtq_n_f32_s32(vsubq_s32(v4, v2), 4); \
-	v5 = vmlaq_f32(vcvtq_n_f32_s32(v3, 4), v5, scale); \
+	v4 = vshll_n_u16(vget_##low##_u16(v0), 4); \
+	v5 = vcvtq_n_f32_s32(vreinterpretq_s32_u32(vsubw_u16(v4, h2)), 4); \
+	v5 = vmlaq_f32(vcvtq_n_f32_u32(vmovl_u16(h3), 4), v5, scale); \
 	v5 = vmaxq_f32(v5, vdupq_n_f32(0)); \
 	v5 = vsubq_f32(v5, vdupq_n_f32(CENTERJSAMPLE)); \
 	v5 = vminq_f32(v5, vdupq_n_f32(CENTERJSAMPLE)); \
@@ -509,7 +514,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #undef M1
 			v0 = _mm_setzero_si128();
 			v1 = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)&image2[y * stride]));
-#define M1(lo, sumAA, sumAB, x)  \
+#define M1(lo, sumAA, sumAB, x) \
 	v2 = _mm_unpack##lo##_epi16(sumA, v0); sumAA = _mm_slli_epi32(sumAA, 4); \
 	v3 = _mm_unpack##lo##_epi16(sumB, v0); sumAB = _mm_slli_epi32(sumAB, 4); \
 	sumAA = _mm_sub_epi32(sumAA, _mm_mullo_epi32(v2, v2)); \
@@ -741,6 +746,11 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	f0 = vmulq_f32(f0, vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v0)))); \
 	s0 = vmlaq_f32(s0, f0, f1); s1 = vmlaq_f32(s1, f1, f1);
 
+#ifdef __aarch64__
+#define VFIN \
+	a2 = vaddvq_f32(vaddq_f32(s0, s2)); \
+	a3 = vaddvq_f32(vaddq_f32(s1, s3));
+#else
 #define VFIN { \
 	float32x4x2_t p0; float32x2_t v0; \
 	p0 = vzipq_f32(vaddq_f32(s0, s2), vaddq_f32(s1, s3)); \
@@ -748,6 +758,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	v0 = vadd_f32(vget_low_f32(f0), vget_high_f32(f0)); \
 	a2 = vget_lane_f32(v0, 0); a3 = vget_lane_f32(v0, 1); \
 }
+#endif
 
 #elif 1 && defined(USE_AVX512)
 #define VINCR 2
@@ -1027,10 +1038,14 @@ end:
 #undef M1
 		}
 		{
+#ifdef __aarch64__
+			m0 = vaddvq_s32(s0); m1 = vaddvq_s32(s1);
+#else
 			int32x4x2_t v0 = vzipq_s32(s0, s1); int32x2_t v1;
-			s0 = vaddq_s32(v0.val[0], v0.val[1]); 
+			s0 = vaddq_s32(v0.val[0], v0.val[1]);
 			v1 = vadd_s32(vget_low_s32(s0), vget_high_s32(s0));
 			m0 = vget_lane_s32(v1, 0); m1 = vget_lane_s32(v1, 1);
+#endif
 		}
 		if (m1 > m0) {
 			int mul = (((int64_t)m1 << 13) + (m0 >> 1)) / m0;
@@ -1195,38 +1210,43 @@ static void upsample_row(int w1, int y0, int y1,
 
 #if 1 && defined(USE_NEON)
 		for (y = 0; y < n; y++) {
-			int16x8_t v0, v1, sumA, sumB; float32x4_t v5, scale;
-			int32x4_t v2, v3, v4, sumAA1, sumAB1, sumAA2, sumAB2;
+			uint8x8_t h0, h1; uint16x8_t sumA, sumB, v0, v1;
+			uint16x4_t h2, h3; float32x4_t v5, scale;
+			uint32x4_t v4, sumAA1, sumAB1, sumAA2, sumAB2;
 #define M1(xx, yy) \
-	v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[(y + yy) * stride + xx]))); \
-	v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[(y + yy) * stride + xx]))); \
-	sumA = vaddq_s16(sumA, v0); sumB = vaddq_s16(sumB, v1); \
-	v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmlaq_s32(sumAA1, v2, v2); \
-	v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmlaq_s32(sumAB1, v2, v3); \
-	v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmlaq_s32(sumAA2, v2, v2); \
-	v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmlaq_s32(sumAB2, v2, v3);
+	h0 = vld1_u8(&image2[(y + yy) * stride + xx]); \
+	h1 = vld1_u8(&image[(y + yy) * stride + xx]); \
+	sumA = vaddw_u8(sumA, h0); v0 = vmull_u8(h0, h0); \
+	sumB = vaddw_u8(sumB, h1); v1 = vmull_u8(h0, h1); \
+	sumAA1 = vaddw_u16(sumAA1, vget_low_u16(v0)); \
+	sumAB1 = vaddw_u16(sumAB1, vget_low_u16(v1)); \
+	sumAA2 = vaddw_u16(sumAA2, vget_high_u16(v0)); \
+	sumAB2 = vaddw_u16(sumAB2, vget_high_u16(v1));
 #define M2 \
-	sumA = vaddq_s16(sumA, sumA); sumB = vaddq_s16(sumB, sumB); \
-	sumAA1 = vaddq_s32(sumAA1, sumAA1); sumAA2 = vaddq_s32(sumAA2, sumAA2); \
-	sumAB1 = vaddq_s32(sumAB1, sumAB1); sumAB2 = vaddq_s32(sumAB2, sumAB2);
-			sumA = v0 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
-			sumB = v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image[y * stride])));
-			v2 = vmovl_s16(vget_low_s16(v0)); sumAA1 = vmulq_s32(v2, v2);
-			v3 = vmovl_s16(vget_low_s16(v1)); sumAB1 = vmulq_s32(v2, v3);
-			v2 = vmovl_s16(vget_high_s16(v0)); sumAA2 = vmulq_s32(v2, v2);
-			v3 = vmovl_s16(vget_high_s16(v1)); sumAB2 = vmulq_s32(v2, v3);
+	sumA = vaddq_u16(sumA, sumA); sumB = vaddq_u16(sumB, sumB); \
+	sumAA1 = vaddq_u32(sumAA1, sumAA1); sumAA2 = vaddq_u32(sumAA2, sumAA2); \
+	sumAB1 = vaddq_u32(sumAB1, sumAB1); sumAB2 = vaddq_u32(sumAB2, sumAB2);
+			h0 = vld1_u8(&image2[y * stride]);
+			h1 = vld1_u8(&image[y * stride]);
+			sumA = vmovl_u8(h0); v0 = vmull_u8(h0, h0);
+			sumB = vmovl_u8(h1); v1 = vmull_u8(h0, h1);
+			sumAA1 = vmovl_u16(vget_low_u16(v0));
+			sumAB1 = vmovl_u16(vget_low_u16(v1));
+			sumAA2 = vmovl_u16(vget_high_u16(v0));
+			sumAB2 = vmovl_u16(vget_high_u16(v1));
 			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
 			M2 M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
-			v1 = vreinterpretq_s16_u16(vmovl_u8(vld1_u8(&image2[y * stride])));
-#define M1(low, sumAA, sumAB, x)  \
-	v2 = vmovl_s16(vget_##low##_s16(sumA)); sumAA = vshlq_n_s32(sumAA, 4); \
-	v3 = vmovl_s16(vget_##low##_s16(sumB)); sumAB = vshlq_n_s32(sumAB, 4); \
-	sumAA = vmlsq_s32(sumAA, v2, v2); sumAB = vmlsq_s32(sumAB, v2, v3); \
-	v4 = vreinterpretq_s32_u32(vtstq_s32(sumAA, sumAA)); \
-	sumAB = vandq_s32(sumAB, v4); sumAA = vornq_s32(sumAA, v4); \
-	scale = vdivq_f32(vcvtq_f32_s32(sumAB), vcvtq_f32_s32(sumAA)); \
+			v0 = vmovl_u8(vld1_u8(&image2[y * stride]));
+#define M1(low, sumAA, sumAB, x) \
+	h2 = vget_##low##_u16(sumA); sumAA = vshlq_n_u32(sumAA, 4); \
+	h3 = vget_##low##_u16(sumB); sumAB = vshlq_n_u32(sumAB, 4); \
+	sumAA = vmlsl_u16(sumAA, h2, h2); sumAB = vmlsl_u16(sumAB, h2, h3); \
+	v4 = vtstq_u32(sumAA, sumAA); \
+	sumAB = vandq_u32(sumAB, v4); sumAA = vornq_u32(sumAA, v4); \
+	scale = vdivq_f32(vcvtq_f32_s32(vreinterpretq_s32_u32(sumAB)), \
+			vcvtq_f32_s32(vreinterpretq_s32_u32(sumAA))); \
 	scale = vmaxq_f32(scale, vdupq_n_f32(-16.0f)); \
 	scale = vminq_f32(scale, vdupq_n_f32(16.0f)); \
 	v5 = scale; \
@@ -1303,7 +1323,7 @@ static void upsample_row(int w1, int y0, int y1,
 			M1(-1, -1, 1, -1) M1(-1, 1, 1, 1)
 #undef M1
 			v0 = _mm_setzero_si128();
-#define M1(lo, sumAA, sumAB, x)  \
+#define M1(lo, sumAA, sumAB, x) \
 	v2 = _mm_unpack##lo##_epi16(sumA, v0); sumAA = _mm_slli_epi32(sumAA, 4); \
 	v3 = _mm_unpack##lo##_epi16(sumB, v0); sumAB = _mm_slli_epi32(sumAB, 4); \
 	sumAA = _mm_sub_epi32(sumAA, _mm_mullo_epi32(v2, v2)); \
@@ -1788,7 +1808,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 					h2 = h2 < hs ? h2 : hs;
 					for (x = 0; x < w1; x++) {
 						JSAMPLE *p = image + (y * hs + 1) * stride + x * ws + 1;
-						int xx, yy, sum = 0, w2 = comp_width * DCTSIZE - x * ws, div; 
+						int xx, yy, sum = 0, w2 = comp_width * DCTSIZE - x * ws, div;
 						w2 = w2 < ws ? w2 : ws; div = w2 * h2;
 
 						for (yy = 0; yy < h2; yy++)
