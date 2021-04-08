@@ -1,11 +1,14 @@
 # JPEG Quant Smooth
 
-This program tries to recreate lost precision of DCT coefficients based on quantization table from jpeg image.
-Output saved as jpeg image with quantization set to 1 (like jpeg saved with 100% quality). You can save smoothed image with original quantization tables resulting in same DCT coefficients as in original image.
+This program tries to recover the lost precision of DCT coefficients based on a quantization table from a JPEG image. The result is saved as a JPEG image with quantization set to 1 (like a JPEG saved at 100% quality).
 
 You may not notice jpeg artifacts on the screen without zooming in, but you may notice them after printing. Also, when editing compressed images, artifacts can accumulate, but if you use this program before editing - the result will be better.
 
-The original project page is [here](https://github.com/ilyakurdyukov/jpeg-quantsmooth).
+* The original project page is [here](https://github.com/ilyakurdyukov/jpeg-quantsmooth).
+
+* You can save a smoothed image with the original quantization tables, which will result in the same DCT coefficients as in the original image. (Note: chroma will be slightly different if upsampling is used at quality level 6)
+
+* Since this program uses quantization tables to recreate DCT coefficients, applying it to JPEG images that have been re-saved multiple times may not produce good results, as it can recover only from the last JPEG recoding, and not from the previous ones.
 
 ## WebAssembly
 

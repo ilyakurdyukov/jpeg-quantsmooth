@@ -12,9 +12,9 @@ APPNAME ?= jpegqs
 endif
 $(APPNAME): Makefile $(SRCDEPS)
 endif
-SIMD ?= native
+SIMD := native
 # machine flags
-MFLAGS ?= 
+MFLAGS := 
 SIMDFLG :=
 SIMDOBJ :=
 ifeq ($(SIMD),select)
@@ -33,10 +33,11 @@ endif
 # multithreading options
 MTOPTS := -fopenmp
 # path to save "libgomp.a"
-LIBMINIOMP ?=
-LFLAGS ?= -Wl,--gc-sections
+LIBMINIOMP :=
+CFLAGS := -Wall -O2
+LDFLAGS := -Wl,--gc-sections -s
 
-CFLAGS_LIB := -Wall -O2 $(MFLAGS) $(SIMDFLG)
+CFLAGS_LIB := $(CFLAGS) $(MFLAGS) $(SIMDFLG)
 CFLAGS_APP := $(CFLAGS_LIB) -Wextra -pedantic $(MTOPTS)
 ifeq ($(SIMD),select)
 CFLAGS_APP += -DSIMD_SELECT
@@ -122,7 +123,7 @@ $(APPNAME): $(LIBMINIOMP)
 endif
 
 $(APPNAME): $(SRCNAME) $(SIMDOBJ)
-	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -s -o $@ $< $(JPEGLIB2) $(SIMDOBJ) $(LFLAGS) -lm
+	$(CC) $(CFLAGS_APP) -DAPPNAME=$(APPNAME) -o $@ $< $(JPEGLIB2) $(SIMDOBJ) $(LDFLAGS) -lm
 
 ifeq ($(SRCNAME),example.c)
 SIMDSEL_FLAGS ?=

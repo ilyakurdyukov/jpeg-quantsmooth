@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Ilya Kurdyukov
+ * Copyright (C) 2016-2021 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth
  *
