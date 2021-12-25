@@ -1,3 +1,5 @@
+OS := $(shell uname)
+ARCH := $(shell uname -m)
 
 SRCDEPS := quantsmooth.h idct.h libjpegqs.h
 SRCNAME ?= quantsmooth.c
@@ -22,7 +24,11 @@ SIMDOBJ := jpegqs_base.o jpegqs_sse2.o jpegqs_avx2.o jpegqs_avx512.o
 else ifeq ($(SIMD),none)
 SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
+ifneq (,$(filter arm% aarch64,$(ARCH)))
+SIMDFLG := -mcpu=native
+else
 SIMDFLG := -march=native
+endif
 else ifeq ($(SIMD),avx512)
 SIMDFLG := -mavx512f -mfma
 else ifeq ($(SIMD),avx2)
@@ -31,11 +37,25 @@ else ifeq ($(SIMD),sse2)
 SIMDFLG := -msse2
 endif
 # multithreading options
+ifeq ($(OS),Darwin)
+MTOPTS := -Xpreprocessor -fopenmp
+else
 MTOPTS := -fopenmp
+endif
 # path to save "libgomp.a"
 LIBMINIOMP :=
 CFLAGS := -Wall -O2
+ifneq (,$(filter e2k,$(ARCH)))
+CFLAGS := $(filter-out -O2,$(CFLAGS)) -O3
+endif
+ifeq ($(OS),Darwin)
+LDFLAGS := -Wl,-dead_strip
+ifeq ($(LIBMINIOMP),)
+LDFLAGS += -lomp
+endif
+else
 LDFLAGS := -Wl,--gc-sections -s
+endif
 
 CFLAGS_LIB := $(CFLAGS) $(MFLAGS) $(SIMDFLG)
 CFLAGS_APP := $(CFLAGS_LIB) -Wextra -pedantic $(MTOPTS)
