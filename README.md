@@ -65,7 +65,7 @@ After processing:<br>
 <img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/text_new.png"> <img src="https://ilyakurdyukov.github.io/jpeg-quantsmooth/images/lena_new.png"><br>
 </b></p>
 
-## Buliding on Linux
+## Building on Linux
 
 If your system have *libjpeg* development package installed, just type `make`.
 Tested with `libjpeg-turbo8-dev` package from Ubuntu-18.04.
