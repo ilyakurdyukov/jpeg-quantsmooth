@@ -1588,8 +1588,8 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		// skip if already processed
 		{
 			int val = 0;
-			for (i = 0; i < DCTSIZE2; i++) val |= (int)qtbl->quantval[i] - 1;
-			if (val <= 0) num_iter2 = 0;
+			for (i = 0; i < DCTSIZE2; i++) val |= qtbl->quantval[i];
+			if (val <= 1) num_iter2 = 0;
 
 			// damaged JPEG files may contain multipliers equal to zero
 			// replacing them with ones avoids division by zero
