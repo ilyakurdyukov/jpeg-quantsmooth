@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2021 Ilya Kurdyukov
+ * Copyright (C) 2016-2022 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth
  *
@@ -707,7 +707,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		for (y = 0; y < n; y++)
 		for (x = 0; x < n; x++) {
 #define M1(i, x, y) t0 = a - image[(y) * stride + x]; \
-	t = range - fabsf(t0); if (t < 0) t = 0; t *= t; aw = c##i * t; \
+	t = range - fabsf(t0); t = t < 0 ? 0 : t; t *= t; aw = c##i * t; \
 	a0 += t0 * t * aw; an += aw * aw;
 			int a = image[(y)*stride+(x)];
 			float a0 = 0, an = 0, aw, t, t0;
@@ -962,14 +962,15 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		{
 			int p; float a0, a1, t;
 #define CORE t = (float)range - fabsf(a0); \
-	if (t < 0) t = 0; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
+	t = t < 0 ? 0 : t; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
 #define M1(a, b) \
 	for (y = 0; y < n - 1 + a; y++) \
 	for (x = 0; x < n - 1 + b; x++) { p = y * n + x; \
 	a0 = buf[p] - buf[(y + b) * n + x + a]; a1 = tab[p]; CORE }
 #define M2(z, i) for (z = 0; z < n; z++) { p = y * n + x; \
 	a0 = buf[p] - border[i * n + z]; a1 = *tab++; CORE }
-			if (i & (n - 1)) M1(1, 0) tab += n * n;
+			if (i & (n - 1)) M1(1, 0)
+			tab += n * n;
 			y = 0; M2(x, 2) y = n - 1; M2(x, 3)
 			x = 0; M2(y, 4) x = n - 1; M2(y, 5)
 			if (i > (n - 1)) M1(0, 1)
@@ -1572,6 +1573,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	}
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
+		UINT16 quantval[DCTSIZE2];
 		int extra_refresh = 0, num_iter2 = num_iter;
 		int prog_cur = prog_next, prog_inc;
 		compptr = srcinfo->comp_info + ci;
@@ -1586,8 +1588,15 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		// skip if already processed
 		{
 			int val = 0;
-			for (i = 0; i < DCTSIZE2; i++) val |= qtbl->quantval[i];
-			if (val <= 1) num_iter2 = 0;
+			for (i = 0; i < DCTSIZE2; i++) val |= (int)qtbl->quantval[i] - 1;
+			if (val <= 0) num_iter2 = 0;
+
+			// damaged JPEG files may contain multipliers equal to zero
+			// replacing them with ones avoids division by zero
+			for (i = 0; i < DCTSIZE2; i++) {
+				val = qtbl->quantval[i];
+				quantval[i] = val - ((val - 1) >> 16);
+			}
 		}
 
 		if (num_iter2 + extra_refresh == 0) continue;
@@ -1674,7 +1683,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JSAMPLE *p2 = image2 && opts->flags & JPEGQS_JOINT_YUV ? image2 + IMAGEPTR : NULL;
 					JCOEFPTR coef = buffer[0][blk_x];
-					quantsmooth_block(coef, qtbl->quantval, image + IMAGEPTR, p2, stride,
+					quantsmooth_block(coef, quantval, image + IMAGEPTR, p2, stride,
 							opts->flags, tables, !ci || srcinfo->jpeg_color_space != JCS_YCbCr);
 				}
 #ifdef PRECISE_PROGRESS
