@@ -184,7 +184,10 @@ static float** quantsmooth_init(int flags) {
 	int size = flags & JPEGQS_DIAGONALS ? nn * 4 + n * (4 - 2) : nn * 2 + n * 4;
 	float *ptr, **tables = (float**)malloc(nn * sizeof(float*) + nn * size * sizeof(float) + nalign - 1);
 	if (!tables) return NULL;
-	ptr = (float*)(((intptr_t)&tables[DCTSIZE2] + nalign - 1) & -nalign);
+	/* careful alignment that will work on pointers with metadata */
+	ptr = (float*)((char*)&tables[DCTSIZE2] +
+			((0 - (uintptr_t)&tables[DCTSIZE2]) & (nalign - 1)));
+
 	for (i = nn - 1; i >= 0; i--, ptr += size)
 		tables[(int)jpegqs_natural_order[i]] = ptr;
 
