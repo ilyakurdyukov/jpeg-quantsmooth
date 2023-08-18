@@ -1716,6 +1716,29 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 #endif
 		} // iter
 
+		// fix a rare JERR_BAD_DCT_COEF ("DCT coefficient out of range") error
+		// it doesn't take much time
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+		for (blk_y = 0; blk_y < comp_height; blk_y++) {
+			JDIMENSION blk_x;
+			JBLOCKARRAY buffer = (*srcinfo->mem->access_virt_barray)
+					((j_common_ptr)srcinfo, coef_arrays[ci], blk_y, 1, TRUE);
+
+			for (blk_x = 0; blk_x < comp_width; blk_x++) {
+				JCOEFPTR coef = buffer[0][blk_x]; int i;
+				for (i = 0; i < DCTSIZE2; i++) {
+					// MAX_COEF_BITS = BITS_IN_JSAMPLE + 2
+					int lim = (4 << BITS_IN_JSAMPLE) - 1;
+					int a = coef[i];
+					if (a > lim) a = lim;
+					if (a < -lim) a = -lim;
+					coef[i] = a;
+				}
+			}
+		}
+
 		if (!stop && image1) {
 			JSAMPLE *mem; int st, w1, h1, h2, ws, hs, ww, hh;
 			compptr = srcinfo->comp_info;
