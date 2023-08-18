@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Ilya Kurdyukov
+ * Copyright (C) 2020-2023 Ilya Kurdyukov
  *
  * JPEG Quant Smooth API definitions
  */
@@ -35,8 +35,8 @@ enum {
 #define JPEGQS_ATTR
 #endif
 
-#define JPEGQS_VERSION "1.20210408"
-#define JPEGQS_COPYRIGHT "Copyright (C) 2020-2021 Ilya Kurdyukov"
+#define JPEGQS_VERSION "1.20230818"
+#define JPEGQS_COPYRIGHT "Copyright (C) 2020-2023 Ilya Kurdyukov"
 
 typedef struct {
 	int flags, niter, threads, progprec;
