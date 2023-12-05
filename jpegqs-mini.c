@@ -173,7 +173,7 @@ static void quantsmooth_block(j_decompress_ptr srcinfo, jpeg_component_info *com
 		for (y = 0; y < n; y++)
 		for (x = 0; x < n; x++) {
 #define CORE(i, x, y) t0 = a - image[(y) * stride + (x)]; \
-	t = range - fabsf(t0); if (t < 0) t = 0; t *= t; aw = c##i * t; \
+	t = range - fabsf(t0); if (t < 0) { t = 0; } t *= t; aw = c##i * t; \
 	a0 += t0 * t * aw; an += aw * aw;
 			int a = image[(y)*stride+(x)];
 			float a0 = 0, an = 0, aw, t, t0;
@@ -207,7 +207,7 @@ static void quantsmooth_block(j_decompress_ptr srcinfo, jpeg_component_info *com
 		if (need_refresh && zigzag_refresh[i]) { IDCT_ISLOW(0); need_refresh = 0; }
 
 #define CORE t = (float)range - fabsf(a0); \
-	if (t < 0) t = 0; t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
+	if (t < 0) { t = 0; } t *= t; a0 *= t; a1 *= t; a2 += a0 * a1; a3 += a1 * a1;
 #define M1(a, b) \
 	for (y = 0; y < n - 1 + a; y++) \
 	for (x = 0; x < n - 1 + b; x++) { \
