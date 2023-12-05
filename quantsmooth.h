@@ -46,10 +46,16 @@ struct jpeg_decomp_master {
 	void (*finish_output_pass) (j_decompress_ptr);
 	boolean is_dummy_pass;
 #ifdef LIBJPEG_TURBO_VERSION
+#if LIBJPEG_TURBO_VERSION_NUMBER >= 2001090
+	boolean lossless;
+#endif
 	JDIMENSION first_iMCU_col, last_iMCU_col;
 	JDIMENSION first_MCU_col[MAX_COMPONENTS];
 	JDIMENSION last_MCU_col[MAX_COMPONENTS];
 	boolean jinit_upsampler_no_alloc;
+#if LIBJPEG_TURBO_VERSION_NUMBER >= 2000090
+	JDIMENSION last_good_iMCU_row;
+#endif
 #endif
 };
 #endif
