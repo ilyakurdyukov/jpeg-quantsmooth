@@ -1088,7 +1088,7 @@ end:
 			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
 			v2 = _mm_add_epi16(v0, v2);
 			f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v2));
-			f0 = _mm256_div_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v1)));
+			f0 = _mm256_div_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(v1)));
 			v4 = _mm256_cvttps_epi32(f0);
 			v2 = _mm_packs_epi32(_mm256_castsi256_si128(v4), _mm256_extractf128_si256(v4, 1));
 			v2 = _mm_mullo_epi16(v2, v1);
