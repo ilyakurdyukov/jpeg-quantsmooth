@@ -88,7 +88,137 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	M2(2, ADD(tmp12, tmp1)) M2(5, SUB(tmp12, tmp1)) \
 	M2(3, ADD(tmp13, tmp0)) M2(4, SUB(tmp13, tmp0))
 
-#if 1 && defined(USE_NEON)
+//------------------------------------------------------------------------------
+#if 1 && defined(USE_LASX)
+	__m256i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m256i tmp0, tmp1, tmp2, tmp3;
+	__m256i tmp10, tmp11, tmp12, tmp13;
+	__m256i z1, z2, z3, z4, z5;
+
+#define ADD __lasx_xvadd_w
+#define SUB __lasx_xvsub_w
+#define MUL __lasx_xvmul_w
+#define SET1 __lasx_xvreplgr2vr_w
+#define SHL __lasx_xvslli_w
+
+#define M1(i) __lasx_xvsllwil_w_h(__lasx_xvpermi_q( \
+	__lasx_xvldrepl_d(coef_block, DCTSIZE*i*2+8), \
+	__lasx_xvldrepl_d(coef_block, DCTSIZE*i*2), 0x20), 0)
+#define M2(i, tmp) x##i = __lasx_xvsrari_w(tmp, CONST_BITS-PASS1_BITS);
+	M3
+#undef M1
+#undef M2
+
+#define M2(v0, v1, v2, v3, k) \
+v0 = __lasx_xvpermi_q(x4, x0, k); \
+v1 = __lasx_xvpermi_q(x5, x1, k); \
+v2 = __lasx_xvpermi_q(x6, x2, k); \
+v3 = __lasx_xvpermi_q(x7, x3, k);
+	M2(v0, v1, v2, v3, 0x20)
+	M2(v4, v5, v6, v7, 0x31)
+#undef M2
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = __lasx_xvilvl_w(v2, v0); \
+t1 = __lasx_xvilvl_w(v3, v1); \
+x0 = __lasx_xvilvl_w(t1, t0); \
+x1 = __lasx_xvilvh_w(t1, t0); \
+t0 = __lasx_xvilvh_w(v2, v0); \
+t1 = __lasx_xvilvh_w(v3, v1); \
+x2 = __lasx_xvilvl_w(t1, t0); \
+x3 = __lasx_xvilvh_w(t1, t0);
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+
+#define M1(i) x##i
+#define M2(i, tmp) v##i = __lasx_xvsrai_w(ADD(tmp, t0), CONST_BITS+PASS1_BITS+3);
+	t0 = SET1((256+1) << (CONST_BITS+PASS1_BITS+3-1));
+	M3
+#undef M1
+#undef M2
+
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M4
+
+	x0 = __lasx_xvssrani_h_w(x1, x0, 0);
+	x1 = __lasx_xvssrani_h_w(x3, x2, 0);
+	x4 = __lasx_xvssrani_h_w(x5, x4, 0);
+	x5 = __lasx_xvssrani_h_w(x7, x6, 0);
+	x0 = __lasx_xvssrani_bu_h(x1, x0, 0);
+	x4 = __lasx_xvssrani_bu_h(x5, x4, 0);
+	v0 = __lasx_xvilvl_w(x4, x0);
+	v1 = __lasx_xvilvh_w(x4, x0);
+
+#define M1(i, v0, j) __lasx_xvstelm_d(v0, &outptr[stride*i], 0, j);
+	M1(0, v0, 0) M1(1, v0, 1) M1(2, v1, 0) M1(3, v1, 1)
+	M1(4, v0, 2) M1(5, v0, 3) M1(6, v1, 2) M1(7, v1, 3)
+#undef M1
+//------------------------------------------------------------------------------
+#elif 1 && defined(USE_LSX)
+	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
+
+	__m128i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m128i tmp0, tmp1, tmp2, tmp3;
+	__m128i tmp10, tmp11, tmp12, tmp13;
+	__m128i z1, z2, z3, z4, z5;
+
+#define ADD __lsx_vadd_w
+#define SUB __lsx_vsub_w
+#define MUL __lsx_vmul_w
+#define SET1 __lsx_vreplgr2vr_w
+#define SHL __lsx_vslli_w
+
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
+#define M1(i) __lsx_vsllwil_w_h(__lsx_vldrepl_d(&coef_block[DCTSIZE*i+ctr], 0), 0)
+#define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = __lsx_vsrari_w(tmp, CONST_BITS-PASS1_BITS);
+		M3
+#undef M1
+#undef M2
+	}
+
+	wsptr = workspace;
+	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 8, outptr += 4*stride) {
+#define M1(i) v##i = wsptr[i];
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = __lsx_vilvl_w(v2, v0); \
+t1 = __lsx_vilvl_w(v3, v1); \
+x0 = __lsx_vilvl_w(t1, t0); \
+x1 = __lsx_vilvh_w(t1, t0); \
+t0 = __lsx_vilvh_w(v2, v0); \
+t1 = __lsx_vilvh_w(v3, v1); \
+x2 = __lsx_vilvl_w(t1, t0); \
+x3 = __lsx_vilvh_w(t1, t0);
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+
+#define M1(i) x##i
+#define M2(i, tmp) v##i = __lsx_vsrai_w(ADD(tmp, t0), CONST_BITS+PASS1_BITS+3);
+		t0 = __lsx_vreplgr2vr_w((256+1) << (CONST_BITS+PASS1_BITS+3-1));
+		M3
+#undef M1
+#undef M2
+
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M4
+
+		x0 = __lsx_vssrani_h_w(x4, x0, 0);
+		x1 = __lsx_vssrani_h_w(x5, x1, 0);
+		x2 = __lsx_vssrani_h_w(x6, x2, 0);
+		x3 = __lsx_vssrani_h_w(x7, x3, 0);
+		v0 = __lsx_vssrani_bu_h(x1, x0, 0);
+		v1 = __lsx_vssrani_bu_h(x3, x2, 0);
+
+#define M1(i, v0) __lsx_vstelm_d(v0, &outptr[i*stride], 0, i & 1);
+		M1(0, v0) M1(1, v0) M1(2, v1) M1(3, v1)
+#undef M1
+	}
+//------------------------------------------------------------------------------
+#elif 1 && defined(USE_NEON)
 	int ctr; int32x4_t *wsptr, workspace[DCTSIZE2] ALIGN(16);
 
 	int32x4_t tmp0, tmp1, tmp2, tmp3;
@@ -164,6 +294,7 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 #undef M1
 		}
 	}
+//------------------------------------------------------------------------------
 #elif 1 && defined(USE_AVX2)
 	__m256i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256i tmp0, tmp1, tmp2, tmp3;
@@ -235,6 +366,7 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 #undef M2
 #undef M1
 #endif
+//------------------------------------------------------------------------------
 #elif 1 && defined(USE_SSE2)
 	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
 
@@ -303,6 +435,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 		M1(0, v0, l) M1(1, v0, h) M1(2, v1, l) M1(3, v1, h)
 #undef M1
 	}
+//------------------------------------------------------------------------------
 #else
 #define NEED_RANGELIMIT
 	int32_t tmp0, tmp1, tmp2, tmp3;
