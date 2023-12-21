@@ -115,7 +115,6 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 }
 #define _mm_mullo_epi32 SSE2_mm_mullo_epi32
 #endif
-#endif // __SSE2__
 
 #ifdef __AVX2__
 #define USE_AVX2
@@ -134,6 +133,7 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 #include <immintrin.h>
 #define USE_AVX512
 #endif
+#endif // __SSE2__
 
 #if defined(__ARM_NEON__) || defined(__aarch64__)
 #define USE_NEON
@@ -167,7 +167,22 @@ static inline float32x4_t NEON_vdivq_f32(float32x4_t a, float32x4_t b) {
 }
 #define vdivq_f32 NEON_vdivq_f32
 #endif
+#endif // USE_NEON
+
+#ifdef __loongarch_sx
+#include <lsxintrin.h>
+#define USE_LSX
+#define LSX_PICK_F(pref, __m128) \
+static inline float pref##pickve2gr_fs(__m128 v, const int n) { \
+	union { int i; float f; } u = { pref##pickve2gr_w(v, n) }; return u.f; }
+LSX_PICK_F(__lsx_v, __m128)
+#ifdef __loongarch_asx
+#include <lasxintrin.h>
+#define USE_LASX
+LSX_PICK_F(__lasx_xv, __m256)
 #endif
+#undef LSX_PICK_F
+#endif // __loongarch_sx
 
 #endif // NO_SIMD
 
@@ -732,7 +747,75 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		goto end;
 	}
 
-#if 1 && defined(USE_NEON)
+#if 1 && defined(USE_LSX)
+#define VINITD __m128i v0, v1, v2, vzero = __lsx_vrepli_d(0);
+#define VDIFF(i) __lsx_vst(__lsx_vsub_h(v0, v1), &temp[(i) * n], 0);
+#define VLDPIX(i, p) v##i = __lsx_vilvl_b(vzero, __lsx_vldrepl_d(p, 0));
+#define VRIGHT(a, b) v##a = __lsx_vbsrl_v(v##b, 2);
+#define VCOPY(a, b) v##a = v##b;
+
+#if 1 && defined(USE_LASX)
+#define VINCR 2
+#define VINIT \
+	__m256i v3, v4, v5, v6 = __lasx_xvreplgr2vr_h(range), vzero = __lasx_xvrepli_b(0); \
+	__m256 f0, f1, s0 = (__m256)vzero, s1 = s0, s2 = s0, s3 = s0;
+
+#define VCORE \
+	v4 = __lasx_xvld(temp + y * n, 0); \
+	v4 = __lasx_xvpermi_d(v4, 0xd8); \
+	v3 = __lasx_xvsrai_h(v4, 15); \
+	v5 = __lasx_xvssub_hu(v6, __lasx_xvsigncov_h(v4, v4)); \
+	VCORE1(l, s0, s1, tab) VCORE1(h, s2, s3, tab + 8)
+
+#define VCORE1(lo, s0, s1, tab) \
+	f0 = __lasx_xvffint_s_w(__lasx_xvilv##lo##_h(vzero, v5)); \
+	f0 = __lasx_xvfmul_s(f0, f0); \
+	f1 = __lasx_xvfmul_s(f0, (__m256)__lasx_xvld(tab + y * n, 0)); \
+	f0 = __lasx_xvfmul_s(f0, __lasx_xvffint_s_w(__lasx_xvilv##lo##_h(v3, v4))); \
+	s1 = __lasx_xvfmadd_s(f1, f1, s1); \
+	s0 = __lasx_xvfmadd_s(f0, f1, s0); \
+
+#define VFIN \
+	f0 = __lasx_xvfadd_s(s0, s2); f1 = __lasx_xvfadd_s(s1, s3); \
+	f0 = __lasx_xvfadd_s( /* this intrinsic set is not convenient */ \
+			(__m256)__lasx_xvilvl_w((__m256i)f1, (__m256i)f0), \
+			(__m256)__lasx_xvilvh_w((__m256i)f1, (__m256i)f0)); \
+	/* ABAB ABAB */ \
+	f0 = __lasx_xvfadd_s(f0, (__m256)__lasx_xvbsrl_v(f0, 8)); \
+	f0 = __lasx_xvfadd_s(f0, (__m256)__lasx_xvpermi_d(f0, 0xee)); \
+	a2 = __lasx_xvpickve2gr_fs(f0, 0); \
+	a3 = __lasx_xvpickve2gr_fs(f0, 1);
+
+#else
+#define VINIT \
+	__m128i v3, v4, v5, v6 = __lsx_vreplgr2vr_h(range), vzero = __lsx_vrepli_b(0); \
+	__m128 f0, f1, s0 = (__m128)vzero, s1 = s0, s2 = s0, s3 = s0;
+
+#define VCORE \
+	v4 = __lsx_vld(temp + y * n, 0); \
+	v3 = __lsx_vsrai_h(v4, 15); \
+	v5 = __lsx_vssub_hu(v6, __lsx_vsigncov_h(v4, v4)); \
+	VCORE1(l, s0, s1, tab) VCORE1(h, s2, s3, tab + 4)
+
+#define VCORE1(lo, s0, s1, tab) \
+	f0 = __lsx_vffint_s_w(__lsx_vilv##lo##_h(vzero, v5)); \
+	f0 = __lsx_vfmul_s(f0, f0); \
+	f1 = __lsx_vfmul_s(f0, (__m128)__lsx_vld(tab + y * n, 0)); \
+	f0 = __lsx_vfmul_s(f0, __lsx_vffint_s_w(__lsx_vilv##lo##_h(v3, v4))); \
+	s1 = __lsx_vfmadd_s(f1, f1, s1); \
+	s0 = __lsx_vfmadd_s(f0, f1, s0); \
+
+#define VFIN \
+	f0 = __lsx_vfadd_s(s0, s2); f1 = __lsx_vfadd_s(s1, s3); \
+	f0 = __lsx_vfadd_s( /* this intrinsic set is not convenient */ \
+			(__m128)__lsx_vilvl_w((__m128i)f1, (__m128i)f0), \
+			(__m128)__lsx_vilvh_w((__m128i)f1, (__m128i)f0)); \
+	f0 = __lsx_vfadd_s(f0, (__m128)__lsx_vpermi_w(f0, f0, 0xee)); \
+	a2 = __lsx_vpickve2gr_fs(f0, 0); \
+	a3 = __lsx_vpickve2gr_fs(f0, 1);
+#endif
+
+#elif 1 && defined(USE_NEON)
 #define VINITD uint8x8_t i0, i1, i2;
 #define VDIFF(i) vst1q_u16((uint16_t*)temp + (i) * n, vsubl_u8(i0, i1));
 #define VLDPIX(j, p) i##j = vld1_u8(p);
@@ -1020,7 +1103,56 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 end:
 	if (flags & JPEGQS_NO_REBALANCE) return;
 	if (!luma && flags & JPEGQS_NO_REBALANCE_UV) return;
-#if 1 && defined(USE_NEON)
+#if 1 && (defined(USE_LSX) || defined(USE_LASX))
+	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
+		JCOEF orig[DCTSIZE2]; int coef0 = coef[0];
+#define M1(lsx, __m128i, len, extra) \
+		int32_t m0, m1; __m128i vzero = lsx##repli_b(0), s0 = vzero, s1 = vzero; \
+		coef[0] = 0; \
+		for (k = 0; k < DCTSIZE2; k += len) { \
+			__m128i v0, v1, v2; \
+			v1 = lsx##ldx(quantval, k * 2); \
+			v0 = lsx##ldx(coef, k * 2); \
+			v2 = lsx##signcov_h(v0, lsx##srli_h(v1, 1)); \
+			v2 = lsx##add_h(v0, v2); \
+			v2 = lsx##andn_v /* ~a & b */ (lsx##srai_h(v1, 15), v2); \
+			v2 = lsx##mul_h(lsx##div_h(v2, v1), v1); \
+			lsx##stx(v2, orig, k * 2); \
+			s0 = lsx##maddwev_w_h(s0, v0, v2); \
+			s1 = lsx##maddwev_w_h(s1, v2, v2); \
+			s0 = lsx##maddwod_w_h(s0, v0, v2); \
+			s1 = lsx##maddwod_w_h(s1, v2, v2); \
+		} \
+		s0 = lsx##add_w(lsx##ilvl_w(s1, s0), lsx##ilvh_w(s1, s0)); \
+		s0 = lsx##add_w(s0, lsx##bsrl_v(s0, 8)); \
+		extra \
+		m0 = lsx##pickve2gr_w(s0, 0); m1 = lsx##pickve2gr_w(s0, 1); \
+		if (m1 > m0) { \
+			int mul = (((int64_t)m1 << 13) + (m0 >> 1)) / m0; \
+			__m128i v4 = lsx##replgr2vr_h(mul); \
+			for (k = 0; k < DCTSIZE2; k += len) { \
+				__m128i v0, v1, v2, v3; \
+				v1 = lsx##ldx(quantval, k * 2); \
+				v2 = lsx##ldx(coef, k * 2); \
+				v2 = lsx##muh_h(lsx##slli_h(v2, 4), v4); \
+				v2 = lsx##srari_h(v2, 1); \
+				v0 = lsx##ldx(orig, k * 2); \
+				v3 = lsx##add_h(v1, lsx##sle_h(vzero, v0)); \
+				v2 = lsx##min_h(v2, lsx##add_h(v0, lsx##srai_h(v3, 1))); \
+				v3 = lsx##add_h(v1, lsx##sle_h(v0, vzero)); \
+				v2 = lsx##max_h(v2, lsx##sub_h(v0, lsx##srai_h(v3, 1))); \
+				lsx##stx(v2, coef, k * 2); \
+			} \
+		}
+#if 1 && defined(USE_LASX)
+		M1(__lasx_xv, __m256i, 16, s0 = __lasx_xvadd_w(s0, __lasx_xvpermi_d(s0, 0xee));)
+#else
+		M1(__lsx_v, __m128i, 8, (void)0;)
+#endif
+#undef M1
+		coef[0] = coef0;
+	} else
+#elif 1 && defined(USE_NEON)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
 		JCOEF orig[DCTSIZE2]; int coef0 = coef[0];
 		int32_t m0, m1; int32x4_t s0 = vdupq_n_s32(0), s1 = s0;
@@ -1081,11 +1213,10 @@ end:
 		int32_t m0, m1; __m128i s0 = _mm_setzero_si128(), s1 = s0;
 		coef[0] = 0;
 		for (k = 0; k < DCTSIZE2; k += 8) {
-			__m128i v0, v1, v2, v3; __m256i v4; __m256 f0;
+			__m128i v0, v1, v2; __m256i v4; __m256 f0;
 			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
 			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
-			v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
-			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+			v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
 			v2 = _mm_add_epi16(v0, v2);
 			f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v2));
 			f0 = _mm256_div_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(v1)));
@@ -1126,8 +1257,12 @@ end:
 			__m128i v0, v1, v2, v3, v7; __m128 f0, f2, f4;
 			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
 			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
+#ifdef __SSSE3__
+			v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
+#else
 			v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+#endif
 			v2 = _mm_add_epi16(v0, v2);
 			v7 = _mm_setzero_si128(); v3 = _mm_srai_epi16(v2, 15);
 #define M1(lo, f0) \
