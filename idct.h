@@ -170,7 +170,7 @@ x3 = __lasx_xvilvh_w(t1, t0);
 
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr += 4, wsptr += 4) {
-#define M1(i) __lsx_vsllwil_w_h(__lsx_vldrepl_d(&coef_block[DCTSIZE*i+ctr], 0), 0)
+#define M1(i) __lsx_vsllwil_w_h(__lsx_vldrepl_d(&coef_block[ctr], DCTSIZE*i*2), 0)
 #define M2(i, tmp) wsptr[(i&3)+(i&4)*2] = __lsx_vsrari_w(tmp, CONST_BITS-PASS1_BITS);
 		M3
 #undef M1
@@ -588,7 +588,109 @@ static void fdct_float(float *in, float *out) {
 	M2(7, SUB(t4, ADD(z1, z3))) M2(5, SUB(t5, ADD(z2, z4))) \
 	M2(3, SUB(t6, ADD(z2, z3))) M2(1, SUB(t7, ADD(z1, z4)))
 
-#if 1 && defined(USE_NEON)
+//------------------------------------------------------------------------------
+#if 1 && defined(USE_LASX)
+	__m256 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m256 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD __lasx_xvfadd_s
+#define SUB __lasx_xvfsub_s
+#define MUL __lasx_xvfmul_s
+#define SET1 __lasx_xvfreplgr2vr_s
+
+#define M1(i) (__m256)__lasx_xvld(in + i * DCTSIZE, 0)
+#define M2(i, t) x##i = t;
+	M3
+#undef M1
+#undef M2
+
+#define M4_LASX(lo, a, b) \
+	(__m256)__lasx_xvilv##lo##_w((__m256i)b, (__m256i)a)
+#define M5_LASX(a, b, k) \
+	(__m256)__lasx_xvpermi_q((__m256i)b, (__m256i)a, k)
+#define M5(v0, v1, v2, v3, k) \
+v0 = M5_LASX(x0, x4, k); \
+v1 = M5_LASX(x1, x5, k); \
+v2 = M5_LASX(x2, x6, k); \
+v3 = M5_LASX(x3, x7, k);
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = M4_LASX(l, v0, v2); t1 = M4_LASX(l, v1, v3); \
+x0 = M4_LASX(l, t0, t1); x1 = M4_LASX(h, t0, t1); \
+t0 = M4_LASX(h, v0, v2); t1 = M4_LASX(h, v1, v3); \
+x2 = M4_LASX(l, t0, t1); x3 = M4_LASX(h, t0, t1);
+	M5(v0, v1, v2, v3, 0x20)
+	M5(v4, v5, v6, v7, 0x31)
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#define M1(i) x##i
+#define M2(i, t) x##i = MUL(t, SET1(0.125f));
+	M3
+#undef M1
+#undef M2
+	M5(v0, v1, v2, v3, 0x20)
+	M5(v4, v5, v6, v7, 0x31)
+	M4(v0, v1, v2, v3, x0, x1, x2, x3)
+	M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M5
+#undef M4
+#undef M5_LASX
+#undef M4_LASX
+
+#define M1(i) __lasx_xvst(x##i, out + i * DCTSIZE, 0);
+	M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+//------------------------------------------------------------------------------
+#elif 1 && defined(USE_LSX)
+	__m128 *ws, buf[DCTSIZE2] ALIGN(16); int i;
+	__m128 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
+	__m128 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#define ADD __lsx_vfadd_s
+#define SUB __lsx_vfsub_s
+#define MUL __lsx_vfmul_s
+#define SET1 __lsx_vfreplgr2vr_s
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, in += 4, ws += 4) {
+#define M1(i) (__m128)__lsx_vld(in, i * DCTSIZE * 4)
+#define M2(i, t) ws[(i & 3) + (i & 4) * 2] = t;
+		M3
+#undef M1
+#undef M2
+	}
+
+	ws = buf;
+	for (i = 0; i < DCTSIZE; i += 4, ws += 8, out += 4 * DCTSIZE) {
+		__m128 c0 = SET1(0.125f);
+#define M1(i) v##i = ws[i];
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+
+#define M4_LSX(lo, a, b) \
+	(__m128)__lsx_vilv##lo##_w((__m128i)b, (__m128i)a)
+#define M4(v0, v1, v2, v3, x0, x1, x2, x3) \
+t0 = M4_LSX(l, v0, v2); t1 = M4_LSX(l, v1, v3); \
+x0 = M4_LSX(l, t0, t1); x1 = M4_LSX(h, t0, t1); \
+t0 = M4_LSX(h, v0, v2); t1 = M4_LSX(h, v1, v3); \
+x2 = M4_LSX(l, t0, t1); x3 = M4_LSX(h, t0, t1);
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#define M1(i) x##i
+#define M2(i, t) v##i = MUL(t, c0);
+		M3
+#undef M1
+#undef M2
+		M4(v0, v1, v2, v3, x0, x1, x2, x3)
+		M4(v4, v5, v6, v7, x4, x5, x6, x7)
+#undef M4
+#undef M4_LSX
+
+#define M1(i) __lsx_vst(x##i, out, ((i & 3) * DCTSIZE + (i & 4)) * 4);
+		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
+#undef M1
+	}
+//------------------------------------------------------------------------------
+#elif 1 && defined(USE_NEON)
 	float32x4_t *ws, buf[DCTSIZE2] ALIGN(16); int i;
 	float32x4_t t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 
@@ -630,6 +732,7 @@ static void fdct_float(float *in, float *out) {
 #undef M1
 		}
 	}
+//------------------------------------------------------------------------------
 #elif 1 && defined(USE_AVX2)
 	__m256 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
@@ -678,6 +781,7 @@ x3 = _mm256_unpackhi_ps(t0, t1);
 #define M1(i) _mm256_storeu_ps(out + i * DCTSIZE, x##i);
 	M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
 #undef M1
+//------------------------------------------------------------------------------
 #elif 1 && defined(USE_SSE2)
 	__m128 *ws, buf[DCTSIZE2] ALIGN(16); int i;
 	__m128 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
@@ -728,6 +832,7 @@ x3 = _mm_unpackhi_ps(t0, t1);
 		M1(0) M1(1) M1(2) M1(3) M1(4) M1(5) M1(6) M1(7)
 #undef M1
 	}
+//------------------------------------------------------------------------------
 #else
 	float *ws, buf[DCTSIZE2]; int i;
 	float t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;

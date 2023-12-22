@@ -172,16 +172,19 @@ static inline float32x4_t NEON_vdivq_f32(float32x4_t a, float32x4_t b) {
 #ifdef __loongarch_sx
 #include <lsxintrin.h>
 #define USE_LSX
-#define LSX_PICK_F(pref, __m128) \
-static inline float pref##pickve2gr_fs(__m128 v, const int n) { \
-	union { int i; float f; } u = { pref##pickve2gr_w(v, n) }; return u.f; }
-LSX_PICK_F(__lsx_v, __m128)
+// this intrinsic set is not convenient
+#define LSX_FLOAT_HACKS(lsx, __m128) \
+static inline float lsx##fpickve2gr_s(__m128 v, const int n) { \
+	union { int i; float f; } u = { lsx##pickve2gr_w(v, n) }; return u.f; } \
+static inline __m128 lsx##freplgr2vr_s(float f) { \
+	union { float f; int i; } u = { f }; return (__m128)lsx##replgr2vr_w(u.i); }
+LSX_FLOAT_HACKS(__lsx_v, __m128)
 #ifdef __loongarch_asx
 #include <lasxintrin.h>
 #define USE_LASX
-LSX_PICK_F(__lasx_xv, __m256)
+LSX_FLOAT_HACKS(__lasx_xv, __m256)
 #endif
-#undef LSX_PICK_F
+#undef LSX_FLOAT_HACKS
 #endif // __loongarch_sx
 
 #endif // NO_SIMD
@@ -272,7 +275,45 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	(void)x; (void)y;
 
 	fdct_float(buf, buf);
-#if 1 && defined(USE_NEON)
+
+#if 1 && (defined(USE_LSX) || defined(USE_LASX))
+	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
+#define M1(lsx, __m128i, __m128, inc, extra) \
+	for (y = 0; y < n; y += inc) { \
+		__m128i v0, v1, v2, v3, vzero = lsx##repli_b(0); \
+		__m128 f0, f1, fhalf = lsx##freplgr2vr_s(0.5f); \
+		__m128i vmask = lsx##replgr2vr_w(0x80000000); \
+		v0 = lsx##ld(&buf[y * n], 0); \
+		v1 = lsx##ld(&buf[y * n], 16 * inc); \
+		v2 = lsx##and_v(v0, vmask); \
+		v3 = lsx##and_v(v1, vmask); \
+		v2 = lsx##or_v(v2, (__m128i)fhalf); \
+		v3 = lsx##or_v(v3, (__m128i)fhalf); \
+		f0 = lsx##fadd_s((__m128)v0, (__m128)v2); \
+		f1 = lsx##fadd_s((__m128)v1, (__m128)v3); \
+		\
+		v1 = lsx##ldx(quantval, y * n * 2); \
+		v0 = lsx##ldx(coef, y * n * 2); \
+		v2 = lsx##signcov_h(v0, lsx##srli_h(v1, 1)); \
+		v2 = lsx##add_h(v0, v2); \
+		v2 = lsx##andn_v /* ~a & b */ (lsx##srai_h(v1, 15), v2); \
+		v0 = lsx##mul_h(lsx##div_h(v2, v1), v1); \
+		v2 = lsx##ssrani_h_w(lsx##ftintrz_w_s(f1), lsx##ftintrz_w_s(f0), 0); \
+		extra; \
+		/* v0 = a0, v1 = div, v2 = add */ \
+		v3 = lsx##avg_h(v1, lsx##sle_h(vzero, v0)); \
+		v2 = lsx##min_h(v2, lsx##add_h(v0, v3)); \
+		v3 = lsx##avg_h(v1, lsx##sle_h(v0, vzero)); \
+		v2 = lsx##max_h(v2, lsx##sub_h(v0, v3)); \
+		lsx##stx(v2, coef, y * n * 2);
+#if 1 && defined(USE_LASX)
+		M1(__lasx_xv, __m256i, __m256, 2, v2 = __lasx_xvpermi_d(v2, 0xd8))
+#else
+		M1(__lsx_v, __m128i, __m128, 1, (void)0)
+#endif
+#undef M1
+	} else
+#elif 1 && defined(USE_NEON)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
 		int16x8_t v0, v1, v2, v3; float32x4_t f0, f1, f2, f3, f4, f5; int32x4_t v4;
@@ -331,8 +372,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		__m128i v0, v1, v2, v3; __m256i v4, v5; __m256 f0, f1;
 		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
 		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
-		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
-		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+		v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
 		v0 = _mm_add_epi16(v0, v2);
 		f0 = _mm256_loadu_ps(&buf[y * n]);
 		f1 = _mm256_blendv_ps(_mm256_set1_ps(0.5f), _mm256_set1_ps(-0.5f), f0);
@@ -356,8 +396,12 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		__m128i v0, v1, v2, v3; __m128 f0, f1, f2, f3, f4;
 		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
 		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
+#ifdef __SSSE3__
+		v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
+#else
 		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
 		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+#endif
 		v0 = _mm_add_epi16(v0, v2);
 		v2 = _mm_setzero_si128(); v3 = _mm_srai_epi16(v0, 15);
 #define M1(lo, f0, f1, x) \
@@ -409,7 +453,61 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 
 	if (image2) {
 		float ALIGN(32) fbuf[DCTSIZE2];
-#if 1 && defined(USE_NEON)
+
+#if 1 && defined(USE_LSX)
+		for (y = 0; y < n; y++) {
+			__m128i vzero = __lsx_vrepli_b(0);
+			__m128i v0, v1, v2, v3, v4, sumA, sumB, sumAA1, sumAB1, sumAA2, sumAB2;
+			__m128 v5, scale, vn16, vp16, vdivn, vcenter;
+#define M1(xx, yy) \
+	v1 = __lsx_vldrepl_d(&image[(y + yy) * stride + xx], 0); \
+	v0 = __lsx_vldrepl_d(&image2[(y + yy) * stride + xx], 0); \
+	v1 = __lsx_vilvl_b(vzero, v1); v0 = __lsx_vilvl_b(vzero, v0); \
+	sumB = __lsx_vadd_h(sumB, v1); v1 = __lsx_vmulwev_h_bu(v0, v1); \
+	sumA = __lsx_vadd_h(sumA, v0); v0 = __lsx_vmulwev_h_bu(v0, v0); \
+	sumAB1 = __lsx_vadd_w(sumAB1, __lsx_vilvl_h(vzero, v1)); \
+	sumAB2 = __lsx_vadd_w(sumAB2, __lsx_vilvh_h(vzero, v1)); \
+	sumAA1 = __lsx_vadd_w(sumAA1, __lsx_vilvl_h(vzero, v0)); \
+	sumAA2 = __lsx_vadd_w(sumAA2, __lsx_vilvh_h(vzero, v0));
+#define M2 \
+	sumA = __lsx_vadd_h(sumA, sumA); sumB = __lsx_vadd_h(sumB, sumB); \
+	sumAA1 = __lsx_vadd_w(sumAA1, sumAA1); sumAA2 = __lsx_vadd_w(sumAA2, sumAA2); \
+	sumAB1 = __lsx_vadd_w(sumAB1, sumAB1); sumAB2 = __lsx_vadd_w(sumAB2, sumAB2);
+			v0 = __lsx_vldrepl_d(&image2[y * stride], 0);
+			v1 = __lsx_vldrepl_d(&image[y * stride], 0);
+			sumA = __lsx_vilvl_b(vzero, v0); sumB = __lsx_vilvl_b(vzero, v1);
+			v0 = __lsx_vmulwev_h_bu(sumA, sumA);
+			v1 = __lsx_vmulwev_h_bu(sumA, sumB);
+			sumAA1 = __lsx_vilvl_h(vzero, v0); sumAA2 = __lsx_vilvh_h(vzero, v0);
+			sumAB1 = __lsx_vilvl_h(vzero, v1); sumAB2 = __lsx_vilvh_h(vzero, v1);
+			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
+			M2 M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
+#undef M2
+#undef M1
+			vn16 = __lsx_vfreplgr2vr_s(-16.0f);
+			vp16 = __lsx_vfreplgr2vr_s(16.0f);
+			vdivn = __lsx_vfreplgr2vr_s(1.0f / 16);
+			vcenter = __lsx_vfreplgr2vr_s(CENTERJSAMPLE);
+			v1 = __lsx_vilvl_b(vzero, __lsx_vldrepl_d(&image2[y * stride], 0));
+#define M1(lo, sumAA, sumAB, x) \
+	v2 = __lsx_vilv##lo##_h(vzero, sumA); sumAA = __lsx_vslli_w(sumAA, 4); \
+	v3 = __lsx_vilv##lo##_h(vzero, sumB); sumAB = __lsx_vslli_w(sumAB, 4); \
+	sumAA = __lsx_vmsub_w(sumAA, v2, v2); \
+	sumAB = __lsx_vmsub_w(sumAB, v2, v3); \
+	v4 = __lsx_vseq_w(sumAA, vzero); sumAB = __lsx_vandn_v(v4, sumAB); \
+	scale = __lsx_vffint_s_w(__lsx_vor_v(sumAA, v4)); \
+	scale = __lsx_vfdiv_s(__lsx_vffint_s_w(sumAB), scale); \
+	scale = __lsx_vfmin_s(__lsx_vfmax_s(scale, vn16), vp16); \
+	v4 = __lsx_vslli_w(__lsx_vilv##lo##_h(vzero, v1), 4); \
+	v5 = __lsx_vffint_s_w(__lsx_vsub_w(v4, v2)); \
+	v5 = __lsx_vfadd_s(__lsx_vfmul_s(v5, scale), __lsx_vffint_s_w(v3)); \
+	v5 = __lsx_vfmax_s(__lsx_vfmul_s(v5, vdivn), (__m128)vzero); \
+	v5 = __lsx_vfmin_s(__lsx_vfsub_s(v5, vcenter), vcenter); \
+	__lsx_vst(v5, fbuf + y * n, x * 4);
+			M1(l, sumAA1, sumAB1, 0) M1(h, sumAA2, sumAB2, 4)
+#undef M1
+		}
+#elif 1 && defined(USE_NEON)
 		for (y = 0; y < n; y++) {
 			uint8x8_t h0, h1; uint16x8_t sumA, sumB, v0, v1;
 			uint16x4_t h2, h3; float32x4_t v5, scale;
@@ -783,8 +881,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	/* ABAB ABAB */ \
 	f0 = __lasx_xvfadd_s(f0, (__m256)__lasx_xvbsrl_v(f0, 8)); \
 	f0 = __lasx_xvfadd_s(f0, (__m256)__lasx_xvpermi_d(f0, 0xee)); \
-	a2 = __lasx_xvpickve2gr_fs(f0, 0); \
-	a3 = __lasx_xvpickve2gr_fs(f0, 1);
+	a2 = __lasx_xvfpickve2gr_s(f0, 0); \
+	a3 = __lasx_xvfpickve2gr_s(f0, 1);
 
 #else
 #define VINIT \
@@ -1106,10 +1204,10 @@ end:
 #if 1 && (defined(USE_LSX) || defined(USE_LASX))
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
 		JCOEF orig[DCTSIZE2]; int coef0 = coef[0];
-#define M1(lsx, __m128i, len, extra) \
+#define M1(lsx, __m128i, inc, extra) \
 		int32_t m0, m1; __m128i vzero = lsx##repli_b(0), s0 = vzero, s1 = vzero; \
 		coef[0] = 0; \
-		for (k = 0; k < DCTSIZE2; k += len) { \
+		for (k = 0; k < DCTSIZE2; k += 8 * inc) { \
 			__m128i v0, v1, v2; \
 			v1 = lsx##ldx(quantval, k * 2); \
 			v0 = lsx##ldx(coef, k * 2); \
@@ -1125,29 +1223,29 @@ end:
 		} \
 		s0 = lsx##add_w(lsx##ilvl_w(s1, s0), lsx##ilvh_w(s1, s0)); \
 		s0 = lsx##add_w(s0, lsx##bsrl_v(s0, 8)); \
-		extra \
+		extra; \
 		m0 = lsx##pickve2gr_w(s0, 0); m1 = lsx##pickve2gr_w(s0, 1); \
 		if (m1 > m0) { \
 			int mul = (((int64_t)m1 << 13) + (m0 >> 1)) / m0; \
 			__m128i v4 = lsx##replgr2vr_h(mul); \
-			for (k = 0; k < DCTSIZE2; k += len) { \
+			for (k = 0; k < DCTSIZE2; k += 8 * inc) { \
 				__m128i v0, v1, v2, v3; \
 				v1 = lsx##ldx(quantval, k * 2); \
 				v2 = lsx##ldx(coef, k * 2); \
 				v2 = lsx##muh_h(lsx##slli_h(v2, 4), v4); \
 				v2 = lsx##srari_h(v2, 1); \
 				v0 = lsx##ldx(orig, k * 2); \
-				v3 = lsx##add_h(v1, lsx##sle_h(vzero, v0)); \
-				v2 = lsx##min_h(v2, lsx##add_h(v0, lsx##srai_h(v3, 1))); \
-				v3 = lsx##add_h(v1, lsx##sle_h(v0, vzero)); \
-				v2 = lsx##max_h(v2, lsx##sub_h(v0, lsx##srai_h(v3, 1))); \
+				v3 = lsx##avg_h(v1, lsx##sle_h(vzero, v0)); \
+				v2 = lsx##min_h(v2, lsx##add_h(v0, v3)); \
+				v3 = lsx##avg_h(v1, lsx##sle_h(v0, vzero)); \
+				v2 = lsx##max_h(v2, lsx##sub_h(v0, v3)); \
 				lsx##stx(v2, coef, k * 2); \
 			} \
 		}
 #if 1 && defined(USE_LASX)
-		M1(__lasx_xv, __m256i, 16, s0 = __lasx_xvadd_w(s0, __lasx_xvpermi_d(s0, 0xee));)
+		M1(__lasx_xv, __m256i, 2, s0 = __lasx_xvadd_w(s0, __lasx_xvpermi_d(s0, 0xee)))
 #else
-		M1(__lsx_v, __m128i, 8, (void)0;)
+		M1(__lsx_v, __m128i, 1, (void)0)
 #endif
 #undef M1
 		coef[0] = coef0;
