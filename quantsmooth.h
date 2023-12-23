@@ -720,11 +720,11 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #else
 		for (y = 0; y < n; y++)
 		for (x = 0; x < n; x++) {
-			float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
-			float divN = 1.0f / 16, scale, offset; float a;
+			int32_t sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
+			float divN = 1.0f / 16, scale, a;
 #define M1(xx, yy) { \
-	float a = image2[(y + yy) * stride + x + xx]; \
-	float b = image[(y + yy) * stride + x + xx]; \
+	int a = image2[(y + yy) * stride + x + xx]; \
+	int b = image[(y + yy) * stride + x + xx]; \
 	sumA += a; sumAA += a * a; \
 	sumB += b; sumAB += a * b; }
 #define M2 sumA += sumA; sumB += sumB; \
@@ -734,15 +734,15 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
-			scale = sumAA - sumA * divN * sumA;
-			if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
+			sumAA = sumAA * 16 - sumA * sumA;
+			sumAB = sumAB * 16 - sumA * sumB;
+			scale = sumAA;
+			if (sumAA) scale = sumAB / scale;
 			scale = scale < -16.0f ? -16.0f : scale;
 			scale = scale > 16.0f ? 16.0f : scale;
-			offset = (sumB - scale * sumA) * divN;
-
-			a = image2[y * stride + x] * scale + offset;
-			a = a < 0 ? 0 : a > MAXJSAMPLE + 1 ? MAXJSAMPLE + 1 : a;
-			fbuf[y * n + x] = a - CENTERJSAMPLE;
+			a = ((image2[y * stride + x] * 16 - sumA) * scale + sumB) * divN;
+			a = (a < 0 ? 0 : a) - CENTERJSAMPLE;
+			fbuf[y * n + x] = a > CENTERJSAMPLE ? CENTERJSAMPLE : a;
 		}
 #endif
 		fdct_clamp(fbuf, coef, quantval);
@@ -1808,11 +1808,11 @@ static void upsample_row(int w1, int y0, int y1,
 #else
 		for (y = 0; y < y1; y++)
 		for (x = 0; x < n; x++) {
-			float sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
-			float divN = 1.0f / 16, scale;
+			int32_t sumA = 0, sumB = 0, sumAA = 0, sumAB = 0;
+			float scale;
 #define M1(xx, yy) { \
-	float a = image2[(y + yy) * stride + x + xx]; \
-	float b = image[(y + yy) * stride + x + xx]; \
+	int a = image2[(y + yy) * stride + x + xx]; \
+	int b = image[(y + yy) * stride + x + xx]; \
 	sumA += a; sumAA += a * a; \
 	sumB += b; sumAB += a * b; }
 #define M2 sumA += sumA; sumB += sumB; \
@@ -1822,8 +1822,10 @@ static void upsample_row(int w1, int y0, int y1,
 			M1(-1, -1) M1(1, -1) M1(-1, 1) M1(1, 1)
 #undef M2
 #undef M1
-			scale = sumAA - sumA * divN * sumA;
-			if (scale != 0.0f) scale = (sumAB - sumA * divN * sumB) / scale;
+			sumAA = sumAA * 16 - sumA * sumA;
+			sumAB = sumAB * 16 - sumA * sumB;
+			scale = sumAA;
+			if (sumAA) scale = sumAB / scale;
 			scale = scale < -16.0f ? -16.0f : scale;
 			scale = scale > 16.0f ? 16.0f : scale;
 			// offset = (sumB - scale * sumA) * divN;
