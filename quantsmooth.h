@@ -2126,13 +2126,14 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 
 		if (image1 || (!ci && need_downsample)) extra_refresh = 1;
 
-		// skip if already processed
 		{
 			int val = 0;
 			for (i = 0; i < DCTSIZE2; i++) val |= qtbl->quantval[i];
-			// also skip if quantval >= 0x800,
+			// skip iterations if already processed
+			if (val <= 1) num_iter2 = 0;
+			// stop if any quantval >= 0x800,
 			// which can only happen in crafted or damaged files
-			if (val <= 1 || val >= 0x800) num_iter2 = 0;
+			if (val >= 0x800) stop = 1;
 
 			// damaged JPEG files may contain multipliers equal to zero
 			// replacing them with ones avoids division by zero
@@ -2182,6 +2183,11 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 
 		for (iter = 0; iter < num_iter2 + extra_refresh; iter++) {
 #ifdef _OPENMP
+			volatile
+#endif
+			int bad_coef = 0;
+
+#ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
 			for (blk_y = 0; blk_y < comp_height; blk_y++) {
@@ -2191,14 +2197,21 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JCOEFPTR coef = buffer[0][blk_x]; int i;
-					if (!iter)
-						for (i = 0; i < DCTSIZE2; i++) coef[i] *= qtbl->quantval[i];
+					if (!iter) {
+						int val = 0;
+						for (i = 0; i < DCTSIZE2; i++)
+							val |= (coef[i] *= qtbl->quantval[i]) + 0x800;
+						// stop if any coef < -0x800 or coef >= 0x800,
+						// which can only happen in crafted or damaged files
+						if (val >> 12) bad_coef = 1;
+					}
 #ifdef USE_JSIMD
 					int output_col = IMAGEPTR;
 #endif
 					idct_islow(coef, image + IMAGEPTR, stride);
 				}
 			}
+			if (bad_coef) { stop = 1; break; }
 
 			{
 				int y, w = comp_width * DCTSIZE, h = comp_height * DCTSIZE;
