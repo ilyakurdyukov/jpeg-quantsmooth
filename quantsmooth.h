@@ -2130,7 +2130,9 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 		{
 			int val = 0;
 			for (i = 0; i < DCTSIZE2; i++) val |= qtbl->quantval[i];
-			if (val <= 1) num_iter2 = 0;
+			// also skip if quantval >= 0x800,
+			// which can only happen in crafted or damaged files
+			if (val <= 1 || val >= 0x800) num_iter2 = 0;
 
 			// damaged JPEG files may contain multipliers equal to zero
 			// replacing them with ones avoids division by zero
