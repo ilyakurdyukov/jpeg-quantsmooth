@@ -19,6 +19,7 @@ SIMD := native
 MFLAGS := 
 SIMDFLG :=
 SIMDOBJ :=
+SIMD_AVX512 := -mavx512f -mavx512dq -mavx512bw -mfma
 ifeq ($(SIMD),select)
 SIMDOBJ := jpegqs_base.o jpegqs_sse2.o jpegqs_avx2.o jpegqs_avx512.o
 else ifeq ($(SIMD),none)
@@ -30,7 +31,7 @@ else
 SIMDFLG := -march=native
 endif
 else ifeq ($(SIMD),avx512)
-SIMDFLG := -mavx512f -mfma
+SIMDFLG := $(SIMD_AVX512)
 else ifeq ($(SIMD),avx2)
 SIMDFLG := -mavx2 -mfma
 else ifeq ($(SIMD),sse2)
@@ -152,7 +153,7 @@ SIMDSEL_FLAGS ?= -DTRANSCODE_ONLY -DWITH_LOG
 endif
 
 jpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx512 -mavx512f -mfma $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
+	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx512 $(SIMD_AVX512) $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
 jpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
 jpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
@@ -169,7 +170,7 @@ lib$(APPNAME).a: libjpegqs.o
 libjpegqs.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(CFLAGS_APP) -c -o $@ $<
 libjpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=avx512 -mavx512f -mfma $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
+	$(CC) -DSIMD_NAME=avx512 $(SIMD_AVX512) $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
 libjpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
 	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
 libjpegqs_sse2.o: libjpegqs.c $(SRCDEPS)

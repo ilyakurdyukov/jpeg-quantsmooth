@@ -80,6 +80,8 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		if (!(cpuid[1] & (1 << 5)) || xcr0 & 6) break; // AVX2
 		type = 3;
 		if (!(cpuid[1] & (1 << 16)) || xcr0 & 0xe6) break; // AVX512F
+		if (!(cpuid[1] & (1 << 17))) break; // AVX512DQ
+		if (!(cpuid[1] & (1 << 30))) break; // AVX512BW
 		type = 4;
 	} while (0);
 

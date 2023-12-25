@@ -114,6 +114,7 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 	return _mm_unpacklo_epi64(_mm_unpacklo_epi32(l, h), _mm_unpackhi_epi32(l, h));
 }
 #define _mm_mullo_epi32 SSE2_mm_mullo_epi32
+#define _mm_extract_epi32(v, i) _mm_cvtsi128_si32(_mm_bsrli_si128(v, (i) * 4))
 #endif
 
 #ifdef __AVX2__
@@ -129,7 +130,7 @@ static inline __m128i SSE2_mm_mullo_epi32(__m128i a, __m128i b) {
 #define _mm256_fnmadd_ps(a, b, c) _mm256_sub_ps(c, _mm256_mul_ps(a, b))
 #endif
 
-#ifdef __AVX512F__
+#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__)
 #include <immintrin.h>
 #define USE_AVX512
 #endif
@@ -270,6 +271,25 @@ static const char zigzag_refresh[DCTSIZE2] = {
 	1, 0, 1, 0, 1, 0, 1, 1
 };
 
+#if 1
+#ifdef USE_NEON
+#define GET_ORIG_COEF(i) \
+	int a0 = (int16_t)quantval[i + DCTSIZE2]; \
+	int qshr = (int16_t)quantval[i + DCTSIZE2 * 2]; \
+	a0 = (a0 * coef1 >> 15) + coef1; \
+	a0 = (-a0 * qshr + 0x4000) >> 15; a0 *= div;
+#else
+#define GET_ORIG_COEF(i) \
+	int a0 = (int16_t)quantval[i + DCTSIZE2]; \
+	int qshr = (int16_t)quantval[i + DCTSIZE2 * 2]; \
+	a0 = (a0 * coef1 >> 16) + coef1; \
+	a0 = (-a0 * qshr + 0x4000) >> 15; a0 *= div;
+#endif
+#else // reference
+#define GET_ORIG_COEF(i) \
+	int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
+#endif
+
 static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	int x, y, n = DCTSIZE;
 	(void)x; (void)y;
@@ -318,49 +338,84 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 #elif 1 && defined(USE_NEON)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
-		int16x8_t v0, v1, v2, v3; float32x4_t f0, f1, f2, f3, f4, f5; int32x4_t v4;
+		int16x8_t v0, v1, v2, v3; float32x4_t f0, f2, f3, f4, f5;
+		v0 = vld1q_s16(&coef[y * n]);
+		v2 = vld1q_s16((int16_t*)&quantval[y * n + DCTSIZE2]);
+		v3 = vaddq_s16(vqdmulhq_s16(v0, v2), v0);
+		v2 = vld1q_s16((int16_t*)&quantval[y * n + DCTSIZE2 * 2]);
 		v1 = vld1q_s16((int16_t*)&quantval[y * n]);
-		v0 = vld1q_s16((int16_t*)&coef[y * n]); v3 = vshrq_n_s16(v0, 15);
-		v2 = veorq_s16(vaddq_s16(vshrq_n_s16(v1, 1), v3), v3);
-		v0 = vaddq_s16(v0, v2); f3 = vdupq_n_f32(0.5f); f5 = vnegq_f32(f3);
-#define M1(low, f0, f1, x) \
+		// v2 = vrshlq_s16(v3, v2);
+		v2 = vqrdmulhq_s16(vnegq_s16(v3), v2);
+		v0 = vmulq_s16(v2, v1);
+		f3 = vdupq_n_f32(0.5f); f5 = vnegq_f32(f3);
+#define M1(f0, x) \
 	f4 = vld1q_f32(&buf[y * n + x]); \
-	v4 = vmovl_s16(vget_##low##_s16(v0)); \
-	f0 = vaddq_f32(f4, vbslq_f32(vcltq_f32(f4, vdupq_n_f32(0)), f5, f3)); \
-	/* correction for imprecise divide */ \
-	f1 = vbslq_f32(vreinterpretq_u32_s32(vshrq_n_s32(v4, 31)), f5, f3); \
-	f4 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v1))); \
-	f1 = vdivq_f32(vaddq_f32(vcvtq_f32_s32(v4), f1), f4);
-		M1(low, f0, f1, 0) M1(high, f2, f3, 4)
+	f0 = vaddq_f32(f4, vbslq_f32(vcltq_f32(f4, vdupq_n_f32(0)), f5, f3));
+		M1(f0, 0) M1(f2, 4)
 #undef M1
 		v2 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f0)), vmovn_s32(vcvtq_s32_f32(f2)));
-		v0 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f1)), vmovn_s32(vcvtq_s32_f32(f3)));
-		v0 = vmulq_s16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
-		v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcgeq_s16(v0, vdupq_n_s16(0))));
-		v2 = vminq_s16(v2, vaddq_s16(v0, vshrq_n_s16(v3, 1)));
-		v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcleq_s16(v0, vdupq_n_s16(0))));
-		v2 = vmaxq_s16(v2, vsubq_s16(v0, vshrq_n_s16(v3, 1)));
+		/* v0 = a0, v1 = div, v2 = add */
+		v3 = vhaddq_s16(v1, vreinterpretq_s16_u16(vcgeq_s16(v0, vdupq_n_s16(0))));
+		v2 = vminq_s16(v2, vaddq_s16(v0, v3));
+		v3 = vhaddq_s16(v1, vreinterpretq_s16_u16(vcleq_s16(v0, vdupq_n_s16(0))));
+		v2 = vmaxq_s16(v2, vsubq_s16(v0, v3));
 		vst1q_s16((int16_t*)&coef[y * n], v2);
 	} else
 #elif 1 && defined(USE_AVX512)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
-	for (y = 0; y < n; y += 2) {
-		__m256i v0, v1, v2, v3; __m512 f0, f1;
-		v1 = _mm256_loadu_si256((__m256i*)&quantval[y * n]);
-		v0 = _mm256_loadu_si256((__m256i*)&coef[y * n]);
-		v2 = _mm256_srli_epi16(v1, 1); v3 = _mm256_srai_epi16(v0, 15);
-		v2 = _mm256_xor_si256(_mm256_add_epi16(v2, v3), v3);
-		v0 = _mm256_add_epi16(v0, v2);
+	for (y = 0; y < n; y += 4) {
+		__m512i v0, v1, v2, v3; __m512 f0, f1, f2, f3, f4, f5;
+		v0 = _mm512_loadu_si512((__m512i*)&coef[y * n]);
+		v2 = _mm512_loadu_si512((__m512i*)&quantval[y * n + DCTSIZE2]);
+		v3 = _mm512_add_epi16(_mm512_mulhi_epi16(v0, v2), v0);
+		v2 = _mm512_loadu_si512((__m512i*)&quantval[y * n + DCTSIZE2 * 2]);
+		v3 = _mm512_sub_epi16(_mm512_setzero_si512(), v3);
+		v1 = _mm512_loadu_si512((__m512i*)&quantval[y * n]);
+		v2 = _mm512_mulhrs_epi16(v3, v2);
+		v0 = _mm512_mullo_epi16(v2, v1);
+		f4 = _mm512_set1_ps(0.5f);
+		f5 = _mm512_set1_ps(-0.5f);
 		f0 = _mm512_loadu_ps(&buf[y * n]);
-		/* vpmovd2m, and+or (need AVX512DQ) */
-		f1 = _mm512_mask_blend_ps(_mm512_cmp_ps_mask(f0, _mm512_setzero_ps(), 1),
-				_mm512_set1_ps(0.5f), _mm512_set1_ps(-0.5f));
+		f2 = _mm512_loadu_ps(&buf[y * n + 16]);
+		f1 = _mm512_mask_blend_ps(_mm512_fpclass_ps_mask(f0, 0x40), f4, f5);
+		f3 = _mm512_mask_blend_ps(_mm512_fpclass_ps_mask(f2, 0x40), f4, f5);
 		f0 = _mm512_add_ps(f0, f1);
-		f1 = _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v0));
-		f1 = _mm512_div_ps(f1, _mm512_cvtepi32_ps(_mm512_cvtepi16_epi32(v1)));
-		v2 = _mm512_cvtepi32_epi16(_mm512_cvttps_epi32(f0));
-		v0 = _mm512_cvtepi32_epi16(_mm512_cvttps_epi32(f1));
-		v0 = _mm256_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
+		f2 = _mm512_add_ps(f2, f3);
+		v2 = _mm512_cvttps_epi32(f0); v3 = _mm512_cvttps_epi32(f2);
+		v2 = _mm512_permutex_epi64(_mm512_packs_epi32(v2, v3), 0xd8);
+		v2 = _mm512_shuffle_i64x2(v2, v2, 0xd8);
+		/* v0 = a0, v1 = div, v2 = add */
+		v1 = _mm512_add_epi16(v1, _mm512_set1_epi16(-1));
+		v3 = _mm512_sub_epi16(v1, _mm512_srai_epi16(v0, 15));
+		v2 = _mm512_min_epi16(v2, _mm512_add_epi16(v0, _mm512_srai_epi16(v3, 1)));
+		v3 = _mm512_sub_epi16(_mm512_setzero_si512(), v0);
+		v3 = _mm512_sub_epi16(v1, _mm512_srai_epi16(v3, 15));
+		v2 = _mm512_max_epi16(v2, _mm512_sub_epi16(v0, _mm512_srai_epi16(v3, 1)));
+		_mm512_storeu_si512((__m512i*)&coef[y * n], v2);
+	} else
+#elif 1 && defined(USE_AVX2)
+	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
+	for (y = 0; y < n; y += 2) {
+		__m256i v0, v1, v2, v3; __m256 f0, f1, f2, f3, f4, f5;
+		v0 = _mm256_loadu_si256((__m256i*)&coef[y * n]);
+		v2 = _mm256_loadu_si256((__m256i*)&quantval[y * n + DCTSIZE2]);
+		v3 = _mm256_add_epi16(_mm256_mulhi_epi16(v0, v2), v0);
+		v2 = _mm256_loadu_si256((__m256i*)&quantval[y * n + DCTSIZE2 * 2]);
+		v3 = _mm256_sub_epi16(_mm256_setzero_si256(), v3);
+		v1 = _mm256_loadu_si256((__m256i*)&quantval[y * n]);
+		v2 = _mm256_mulhrs_epi16(v3, v2);
+		v0 = _mm256_mullo_epi16(v2, v1);
+		f4 = _mm256_set1_ps(0.5f);
+		f5 = _mm256_set1_ps(-0.5f);
+		f0 = _mm256_loadu_ps(&buf[y * n]);
+		f2 = _mm256_loadu_ps(&buf[y * n + 8]);
+		f1 = _mm256_blendv_ps(f4, f5, f0);
+		f3 = _mm256_blendv_ps(f4, f5, f2);
+		f0 = _mm256_add_ps(f0, f1);
+		f2 = _mm256_add_ps(f2, f3);
+		v2 = _mm256_cvttps_epi32(f0); v3 = _mm256_cvttps_epi32(f2);
+		v2 = _mm256_permute4x64_epi64(_mm256_packs_epi32(v2, v3), 0xd8);
+		/* v0 = a0, v1 = div, v2 = add */
 		v1 = _mm256_add_epi16(v1, _mm256_set1_epi16(-1));
 		v3 = _mm256_sub_epi16(v1, _mm256_srai_epi16(v0, 15));
 		v2 = _mm256_min_epi16(v2, _mm256_add_epi16(v0, _mm256_srai_epi16(v3, 1)));
@@ -368,57 +423,33 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		v2 = _mm256_max_epi16(v2, _mm256_sub_epi16(v0, _mm256_srai_epi16(v3, 1)));
 		_mm256_storeu_si256((__m256i*)&coef[y * n], v2);
 	} else
-#elif 1 && defined(USE_AVX2)
-	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
-	for (y = 0; y < n; y++) {
-		__m128i v0, v1, v2, v3; __m256i v4, v5; __m256 f0, f1;
-		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
-		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
-		v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
-		v0 = _mm_add_epi16(v0, v2);
-		f0 = _mm256_loadu_ps(&buf[y * n]);
-		f1 = _mm256_blendv_ps(_mm256_set1_ps(0.5f), _mm256_set1_ps(-0.5f), f0);
-		f0 = _mm256_add_ps(f0, f1);
-		f1 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v0));
-		f1 = _mm256_div_ps(f1, _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v1)));
-		v4 = _mm256_cvttps_epi32(f0); v5 = _mm256_cvttps_epi32(f1);
-		v4 = _mm256_permute4x64_epi64(_mm256_packs_epi32(v5, v4), 0xd8);
-		v0 = _mm256_castsi256_si128(v4); v2 = _mm256_extracti128_si256(v4, 1);
-		v0 = _mm_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
-		v1 = _mm_add_epi16(v1, _mm_set1_epi16(-1));
-		v3 = _mm_sub_epi16(v1, _mm_srai_epi16(v0, 15));
-		v2 = _mm_min_epi16(v2, _mm_add_epi16(v0, _mm_srai_epi16(v3, 1)));
-		v3 = _mm_sub_epi16(v1, _mm_cmpgt_epi16(v0, _mm_setzero_si128()));
-		v2 = _mm_max_epi16(v2, _mm_sub_epi16(v0, _mm_srai_epi16(v3, 1)));
-		_mm_storeu_si128((__m128i*)&coef[y * n], v2);
-	} else
 #elif 1 && defined(USE_SSE2)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0]))
 	for (y = 0; y < n; y++) {
-		__m128i v0, v1, v2, v3; __m128 f0, f1, f2, f3, f4;
-		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
+		__m128i v0, v1, v2, v3; __m128 f0, f1, f2, f3, f4, f5;
 		v0 = _mm_loadu_si128((__m128i*)&coef[y * n]);
+		v2 = _mm_loadu_si128((__m128i*)&quantval[y * n + DCTSIZE2]);
+		v3 = _mm_add_epi16(_mm_mulhi_epi16(v0, v2), v0);
+		v2 = _mm_loadu_si128((__m128i*)&quantval[y * n + DCTSIZE2 * 2]);
+		v3 = _mm_sub_epi16(_mm_setzero_si128(), v3);
+		v1 = _mm_loadu_si128((__m128i*)&quantval[y * n]);
 #ifdef __SSSE3__
-		v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
+		v2 = _mm_mulhrs_epi16(v3, v2);
 #else
-		v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
-		v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+		v2 = _mm_mulhi_epi16(_mm_slli_epi16(v3, 2), v2);
+		v2 = _mm_srai_epi16(_mm_sub_epi16(v2, _mm_set1_epi16(-1)), 1);
 #endif
-		v0 = _mm_add_epi16(v0, v2);
-		v2 = _mm_setzero_si128(); v3 = _mm_srai_epi16(v0, 15);
-#define M1(lo, f0, f1, x) \
-	f0 = _mm_loadu_ps((float*)&buf[y * n + x]); \
-	f4 = _mm_cmplt_ps(f0, _mm_setzero_ps()); \
-	f4 = _mm_castsi128_ps(_mm_slli_epi32(_mm_castps_si128(f4), 31)); \
-	f0 = _mm_add_ps(f0, _mm_or_ps(f4, _mm_set1_ps(0.5f))); \
-	f4 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v1, v2)); \
-	f1 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v0, v3)); \
-	f1 = _mm_div_ps(f1, f4);
-		M1(lo, f0, f1, 0) M1(hi, f2, f3, 4)
-#undef M1
+		v0 = _mm_mullo_epi16(v2, v1);
+		f0 = _mm_loadu_ps(&buf[y * n]);
+		f2 = _mm_loadu_ps(&buf[y * n + 4]);
+		f4 = _mm_set1_ps(0.5f);
+		f5 = _mm_castsi128_ps(_mm_set1_epi32(0x80000000));
+		f1 = _mm_and_ps(f0, f5);
+		f3 = _mm_and_ps(f2, f5);
+		f0 = _mm_add_ps(f0, _mm_or_ps(f1, f4));
+		f2 = _mm_add_ps(f2, _mm_or_ps(f3, f4));
 		v2 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f2));
-		v0 = _mm_packs_epi32(_mm_cvttps_epi32(f1), _mm_cvttps_epi32(f3));
-		v0 = _mm_mullo_epi16(v0, v1); /* v0 = a0, v1 = div, v2 = add */
+		/* v0 = a0, v1 = div, v2 = add */
 		v1 = _mm_add_epi16(v1, _mm_set1_epi16(-1));
 		v3 = _mm_sub_epi16(v1, _mm_srai_epi16(v0, 15));
 		v2 = _mm_min_epi16(v2, _mm_add_epi16(v0, _mm_srai_epi16(v3, 1)));
@@ -430,7 +461,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 	for (x = 0; x < n * n; x++) {
 		int div = quantval[x], coef1 = coef[x], add;
 		int dh, dl, d0 = (div - 1) >> 1, d1 = div >> 1;
-		int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
+		GET_ORIG_COEF(x)
 		dh = a0 + (a0 < 0 ? d1 : d0);
 		dl = a0 - (a0 > 0 ? d1 : d0);
 		add = roundf(buf[x]);
@@ -1314,7 +1345,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		if (range) {
 			int div = quantval[i], coef1 = coef[i], add;
 			int dh, dl, d0 = (div - 1) >> 1, d1 = div >> 1;
-			int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
+			GET_ORIG_COEF(i)
 
 			dh = a0 + (a0 < 0 ? d1 : d0);
 			dl = a0 - (a0 > 0 ? d1 : d0);
@@ -1384,21 +1415,16 @@ end:
 		int32_t m0, m1; int32x4_t s0 = vdupq_n_s32(0), s1 = s0;
 		coef[0] = 0;
 		for (k = 0; k < DCTSIZE2; k += 8) {
-			int16x8_t v0, v1, v2, v3; float32x4_t f0, f3, f4, f5; int32x4_t v4;
+			int16x8_t v0, v1, v2, v3;
+			v0 = vld1q_s16(&coef[k]);
+			v2 = vld1q_s16((int16_t*)&quantval[k + DCTSIZE2]);
+			v3 = vaddq_s16(vqdmulhq_s16(v0, v2), v0);
+			v2 = vld1q_s16((int16_t*)&quantval[k + DCTSIZE2 * 2]);
 			v1 = vld1q_s16((int16_t*)&quantval[k]);
-			v0 = vld1q_s16((int16_t*)&coef[k]); v3 = vshrq_n_s16(v0, 15);
-			v2 = veorq_s16(vaddq_s16(vshrq_n_s16(v1, 1), v3), v3);
-			v2 = vaddq_s16(v0, v2); f3 = vdupq_n_f32(0.5f); f5 = vnegq_f32(f3);
-#define M1(low, f0) \
-	v4 = vmovl_s16(vget_##low##_s16(v2)); \
-	f0 = vbslq_f32(vreinterpretq_u32_s32(vshrq_n_s32(v4, 31)), f5, f3); \
-	f4 = vcvtq_f32_s32(vmovl_s16(vget_##low##_s16(v1))); \
-	f0 = vdivq_f32(vaddq_f32(vcvtq_f32_s32(v4), f0), f4);
-			M1(low, f0) M1(high, f3)
-#undef M1
-			v2 = vcombine_s16(vmovn_s32(vcvtq_s32_f32(f0)), vmovn_s32(vcvtq_s32_f32(f3)));
+			// v2 = vrshlq_s16(v3, v2);
+			v2 = vqrdmulhq_s16(vnegq_s16(v3), v2);
 			v2 = vmulq_s16(v2, v1);
-			vst1q_s16((int16_t*)&orig[k], v2);
+			vst1q_s16(&orig[k], v2);
 #define M1(low) \
 	s0 = vmlal_s16(s0, vget_##low##_s16(v0), vget_##low##_s16(v2)); \
 	s1 = vmlal_s16(s1, vget_##low##_s16(v2), vget_##low##_s16(v2));
@@ -1424,10 +1450,10 @@ end:
 				v2 = vld1q_s16((int16_t*)&coef[k]);
 				v2 = vqrdmulhq_s16(vshlq_n_s16(v2, 2), v4);
 				v0 = vld1q_s16((int16_t*)&orig[k]);
-				v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcgeq_s16(v0, vdupq_n_s16(0))));
-				v2 = vminq_s16(v2, vaddq_s16(v0, vshrq_n_s16(v3, 1)));
-				v3 = vaddq_s16(v1, vreinterpretq_s16_u16(vcleq_s16(v0, vdupq_n_s16(0))));
-				v2 = vmaxq_s16(v2, vsubq_s16(v0, vshrq_n_s16(v3, 1)));
+				v3 = vhaddq_s16(v1, vreinterpretq_s16_u16(vcgeq_s16(v0, vdupq_n_s16(0))));
+				v2 = vminq_s16(v2, vaddq_s16(v0, v3));
+				v3 = vhaddq_s16(v1, vreinterpretq_s16_u16(vcleq_s16(v0, vdupq_n_s16(0))));
+				v2 = vmaxq_s16(v2, vsubq_s16(v0, v3));
 				vst1q_s16((int16_t*)&coef[k], v2);
 			}
 		}
@@ -1436,25 +1462,26 @@ end:
 #elif 1 && defined(USE_AVX2)
 	if (sizeof(quantval[0]) == 2 && sizeof(quantval[0]) == sizeof(coef[0])) {
 		JCOEF orig[DCTSIZE2]; int coef0 = coef[0];
-		int32_t m0, m1; __m128i s0 = _mm_setzero_si128(), s1 = s0;
+		int32_t m0, m1; __m256i s0 = _mm256_setzero_si256(), s1 = s0; __m128i s2;
 		coef[0] = 0;
-		for (k = 0; k < DCTSIZE2; k += 8) {
-			__m128i v0, v1, v2; __m256i v4; __m256 f0;
-			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
-			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
-			v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
-			v2 = _mm_add_epi16(v0, v2);
-			f0 = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(v2));
-			f0 = _mm256_div_ps(f0, _mm256_cvtepi32_ps(_mm256_cvtepu16_epi32(v1)));
-			v4 = _mm256_cvttps_epi32(f0);
-			v2 = _mm_packs_epi32(_mm256_castsi256_si128(v4), _mm256_extractf128_si256(v4, 1));
-			v2 = _mm_mullo_epi16(v2, v1);
-			_mm_storeu_si128((__m128i*)&orig[k], v2);
-			s0 = _mm_add_epi32(s0, _mm_madd_epi16(v0, v2));
-			s1 = _mm_add_epi32(s1, _mm_madd_epi16(v2, v2));
+		for (k = 0; k < DCTSIZE2; k += 16) {
+			__m256i v0, v1, v2, v3;
+			v0 = _mm256_loadu_si256((__m256i*)&coef[k]);
+			v2 = _mm256_loadu_si256((__m256i*)&quantval[k + DCTSIZE2]);
+			v1 = _mm256_add_epi16(_mm256_mulhi_epi16(v0, v2), v0);
+			v2 = _mm256_loadu_si256((__m256i*)&quantval[k + DCTSIZE2 * 2]);
+			v1 = _mm256_sub_epi16(_mm256_setzero_si256(), v1);
+			v3 = _mm256_loadu_si256((__m256i*)&quantval[k]);
+			v2 = _mm256_mulhrs_epi16(v1, v2);
+			v2 = _mm256_mullo_epi16(v2, v3);
+			_mm256_storeu_si256((__m256i*)&orig[k], v2);
+			s0 = _mm256_add_epi32(s0, _mm256_madd_epi16(v0, v2));
+			s1 = _mm256_add_epi32(s1, _mm256_madd_epi16(v2, v2));
 		}
-		s0 = _mm_hadd_epi32(s0, s1); s0 = _mm_hadd_epi32(s0, s0);
-		m0 = _mm_cvtsi128_si32(s0); m1 = _mm_extract_epi32(s0, 1);
+		s0 = _mm256_hadd_epi32(s0, s1); s2 = _mm256_extractf128_si256(s0, 1);
+		s2 = _mm_add_epi32(_mm256_castsi256_si128(s0), s2);
+		s2 = _mm_hadd_epi32(s2, s2);
+		m0 = _mm_cvtsi128_si32(s2); m1 = _mm_extract_epi32(s2, 1);
 		if (m1 > m0) {
 			int mul = (((int64_t)m1 << 13) + (m0 >> 1)) / m0;
 			__m256i v4 = _mm256_set1_epi16(mul);
@@ -1480,37 +1507,31 @@ end:
 		int32_t m0, m1; __m128i s0 = _mm_setzero_si128(), s1 = s0;
 		coef[0] = 0;
 		for (k = 0; k < DCTSIZE2; k += 8) {
-			__m128i v0, v1, v2, v3, v7; __m128 f0, f2, f4;
-			v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
+			__m128i v0, v1, v2, v3;
 			v0 = _mm_loadu_si128((__m128i*)&coef[k]);
+			v2 = _mm_loadu_si128((__m128i*)&quantval[k + DCTSIZE2]);
+			v1 = _mm_add_epi16(_mm_mulhi_epi16(v0, v2), v0);
+			v2 = _mm_loadu_si128((__m128i*)&quantval[k + DCTSIZE2 * 2]);
+			v1 = _mm_sub_epi16(_mm_setzero_si128(), v1);
+			v3 = _mm_loadu_si128((__m128i*)&quantval[k]);
 #ifdef __SSSE3__
-			v2 = _mm_sign_epi16(_mm_srli_epi16(v1, 1), v0);
+			v2 = _mm_mulhrs_epi16(v1, v2);
 #else
-			v2 = _mm_srli_epi16(v1, 1); v3 = _mm_srai_epi16(v0, 15);
-			v2 = _mm_xor_si128(_mm_add_epi16(v2, v3), v3);
+			v2 = _mm_mulhi_epi16(_mm_slli_epi16(v1, 2), v2);
+			v2 = _mm_srai_epi16(_mm_sub_epi16(v2, _mm_set1_epi16(-1)), 1);
 #endif
-			v2 = _mm_add_epi16(v0, v2);
-			v7 = _mm_setzero_si128(); v3 = _mm_srai_epi16(v2, 15);
-#define M1(lo, f0) \
-	f4 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v1, v7)); \
-	f0 = _mm_cvtepi32_ps(_mm_unpack##lo##_epi16(v2, v3)); \
-	f0 = _mm_div_ps(f0, f4);
-		M1(lo, f0) M1(hi, f2)
-#undef M1
-			v2 = _mm_packs_epi32(_mm_cvttps_epi32(f0), _mm_cvttps_epi32(f2));
-			v2 = _mm_mullo_epi16(v2, v1);
+			v2 = _mm_mullo_epi16(v2, v3);
 			_mm_storeu_si128((__m128i*)&orig[k], v2);
 			s0 = _mm_add_epi32(s0, _mm_madd_epi16(v0, v2));
 			s1 = _mm_add_epi32(s1, _mm_madd_epi16(v2, v2));
 		}
-#ifdef USE_SSE4
+#ifdef __SSSE3__
 		s0 = _mm_hadd_epi32(s0, s1); s0 = _mm_hadd_epi32(s0, s0);
-		m0 = _mm_cvtsi128_si32(s0); m1 = _mm_extract_epi32(s0, 1);
 #else
 		s0 = _mm_add_epi32(_mm_unpacklo_epi32(s0, s1), _mm_unpackhi_epi32(s0, s1));
 		s0 = _mm_add_epi32(s0, _mm_bsrli_si128(s0, 8));
-		m0 = _mm_cvtsi128_si32(s0); m1 = _mm_cvtsi128_si32(_mm_bsrli_si128(s0, 4));
 #endif
+		m0 = _mm_cvtsi128_si32(s0); m1 = _mm_extract_epi32(s0, 1);
 		if (m1 > m0) {
 			int mul = (((int64_t)m1 << 13) + (m0 >> 1)) / m0;
 			__m128i v4 = _mm_set1_epi16(mul);
@@ -1518,7 +1539,7 @@ end:
 				__m128i v0, v1, v2, v3 = _mm_set1_epi16(-1);
 				v1 = _mm_loadu_si128((__m128i*)&quantval[k]);
 				v2 = _mm_loadu_si128((__m128i*)&coef[k]);
-#ifdef USE_SSE4
+#ifdef __SSSE3__
 				v2 = _mm_mulhrs_epi16(_mm_slli_epi16(v2, 2), v4);
 #else
 				v2 = _mm_mulhi_epi16(_mm_slli_epi16(v2, 4), v4);
@@ -1541,8 +1562,8 @@ end:
 		int64_t m0 = 0, m1 = 0;
 		for (k = 1; k < DCTSIZE2; k++) {
 			int div = quantval[k], coef1 = coef[k], d1 = div >> 1;
-			int a0 = (coef1 + (coef1 < 0 ? -d1 : d1)) / div * div;
-			orig[k] = a0;
+			GET_ORIG_COEF(k)
+			orig[k] = a0; (void)d1;
 			m0 += coef1 * a0; m1 += a0 * a0;
 		}
 		if (m1 > m0) {
@@ -2114,7 +2135,7 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 	}
 
 	for (ci = 0; ci < srcinfo->num_components; ci++) {
-		UINT16 quantval[DCTSIZE2];
+		UINT16 quantval[DCTSIZE2 * 3];
 		int extra_refresh = 0, num_iter2 = num_iter;
 		int prog_cur = prog_next, prog_inc;
 		compptr = srcinfo->comp_info + ci;
@@ -2140,6 +2161,34 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 			for (i = 0; i < DCTSIZE2; i++) {
 				val = qtbl->quantval[i];
 				quantval[i] = val - ((val - 1) >> 16);
+			}
+
+			// tables to speed up division with rounding
+			for (i = 0; i < DCTSIZE2; i++) {
+				unsigned x1, x2, q = quantval[i];
+#ifdef __GNUC__
+				unsigned n = 31 - __builtin_clz(q);
+#else
+				unsigned n = 0, t = q;
+				if (t >= 256) n += 8, t >>= 8;
+				if (t >= 16) n += 4, t >>= 4;
+				if (t >= 4) n += 2, t >>= 2;
+				n += t >> 1;
+#endif
+#ifdef USE_NEON
+				// dividend = -0x2000..0x1fff, divisor = 0..0xffff
+				x1 = ((0x8000u << n) + q - 1) / q;
+				if (n) x1 |= x1 >> 15; // fix -2^n
+				x1 = (int16_t)(x1 * 2) >> 1;
+				x2 = -0x8000 >> n;
+#else
+				// dividend = -0x4000..0x3fff, divisor = 0..0xffff
+				x1 = ((0x10000u << n) + q - 1) / q;
+				if (n) x1 |= x1 >> 16; // fix -2^n
+				x2 = -0x8000 >> n;
+#endif
+				quantval[i + DCTSIZE2] = x1;
+				quantval[i + DCTSIZE2 * 2] = x2;
 			}
 		}
 
@@ -2198,9 +2247,9 @@ JPEGQS_ATTR int QS_NAME(j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays,
 				for (blk_x = 0; blk_x < comp_width; blk_x++) {
 					JCOEFPTR coef = buffer[0][blk_x]; int i;
 					if (!iter) {
-						int val = 0;
+						int val = 0, tmp;
 						for (i = 0; i < DCTSIZE2; i++)
-							val |= (coef[i] *= qtbl->quantval[i]) + 0x800;
+							coef[i] = tmp = coef[i] * qtbl->quantval[i], val |= tmp + 0x800;
 						// stop if any coef < -0x800 or coef >= 0x800,
 						// which can only happen in crafted or damaged files
 						if (val >> 12) bad_coef = 1;
