@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Ilya Kurdyukov
+ * Copyright (C) 2024 Ilya Kurdyukov
  *
  * JPEG reader plugin for IrfanView
  */
@@ -9,6 +9,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <setjmp.h>
+#if defined(__GNUC__) && defined(__x86_64__)
+int __cdecl __attribute__ ((__nothrow__,__returns_twice__)) _setjmpex(jmp_buf,void*);
+#undef setjmp
+#define setjmp(buf) _setjmpex(buf, NULL)
+#endif
 #include "jpeglib.h"
 
 #define WIN32_LEAN_AND_MEAN
