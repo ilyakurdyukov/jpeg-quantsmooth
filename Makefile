@@ -27,6 +27,8 @@ SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
 ifneq (,$(filter arm% aarch64,$(ARCH)))
 SIMDFLG := -mcpu=native
+else ifneq (,$(filter powerpc,$(shell uname -p)))
+SIMDFLG := -mtune=native
 else
 SIMDFLG := -march=native
 endif
