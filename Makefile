@@ -54,7 +54,11 @@ endif
 ifeq ($(OS),Darwin)
 LDFLAGS := -Wl,-dead_strip
 ifeq ($(LIBMINIOMP),)
+ifneq '' '$(findstring clang,$(CC))'
 LDFLAGS += -lomp
+else
+LDFLAGS += -lgomp
+endif
 endif
 else
 LDFLAGS := -Wl,--gc-sections -s
