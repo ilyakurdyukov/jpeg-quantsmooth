@@ -188,6 +188,14 @@ LSX_FLOAT_HACKS(__lasx_xv, __m256)
 #undef LSX_FLOAT_HACKS
 #endif // __loongarch_sx
 
+#ifdef __riscv_vector
+#include <riscv_vector.h>
+// The vector size must be at least 128 bits,
+// but there is no compile-time detection yet.
+// __riscv_vlenb() * 8 >= 128
+#define USE_RVV
+#endif
+
 #endif // NO_SIMD
 
 #define ALIGN(n) __attribute__((aligned(n)))
@@ -1004,14 +1012,35 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 		goto end;
 	}
 
-#if 1 && defined(USE_LSX)
-#define VINITD __m128i v0, v1, v2, vzero = __lsx_vrepli_b(0);
-#define VDIFF(i) __lsx_vst(__lsx_vsub_h(v0, v1), &temp[(i) * n], 0);
-#define VLDPIX(i, p) v##i = __lsx_vilvl_b(vzero, __lsx_vldrepl_d(p, 0));
-#define VRIGHT(a, b) v##a = __lsx_vbsrl_v(v##b, 2);
-#define VCOPY(a, b) v##a = v##b;
+#if 1 && defined(USE_RVV)
+#define VINCR vincr /* rvv128 -> 1, rvv256 -> 2 */
+#define VINIT \
+	unsigned vl = __riscv_vsetvl_e16m1(8 * 2), vincr = vl / 8; \
+	vint16m1_t v4; vuint16m1_t v5, v6 = __riscv_vmv_v_x_u16m1(range, vl); \
+	vfloat32m2_t f0, f1, f4, s0 = __riscv_vfmv_v_f_f32m2(0, vl), s1 = s0; \
 
-#if 1 && defined(USE_LASX)
+#define VCORE \
+	v4 = __riscv_vle16_v_i16m1(&temp[y * n], vl); \
+	f4 = __riscv_vle32_v_f32m2(tab + y * n, vl); \
+	v5 = __riscv_vreinterpret_v_i16m1_u16m1( \
+			__riscv_vmax_vv_i16m1(v4, __riscv_vneg_v_i16m1(v4, vl), vl)); \
+	v5 = __riscv_vssubu_vv_u16m1(v6, v5, vl); \
+	f0 = __riscv_vfwcvt_f_xu_v_f32m2(v5, vl); \
+	f0 = __riscv_vfmul_vv_f32m2(f0, f0, vl); \
+	f1 = __riscv_vfmul_vv_f32m2(f0, f4, vl); \
+	f0 = __riscv_vfmul_vv_f32m2(f0, __riscv_vfwcvt_f_x_v_f32m2(v4, vl), vl); \
+	s0 = __riscv_vfmacc_vv_f32m2(s0, f0, f1, vl); \
+	s1 = __riscv_vfmacc_vv_f32m2(s1, f1, f1, vl);
+
+#define VFIN { \
+	vfloat32m1_t fzero = __riscv_vfmv_v_f_f32m1(0, 8); \
+	a2 = __riscv_vfmv_f_s_f32m1_f32( \
+			__riscv_vfredusum_vs_f32m2_f32m1(s0, fzero, vl)); \
+	a3 = __riscv_vfmv_f_s_f32m1_f32( \
+			__riscv_vfredusum_vs_f32m2_f32m1(s1, fzero, vl)); \
+}
+
+#elif 1 && defined(USE_LASX)
 #define VINCR 2
 #define VINIT \
 	__m256i v3, v4, v5, v6 = __lasx_xvreplgr2vr_h(range), vzero = __lasx_xvrepli_b(0); \
@@ -1043,7 +1072,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	a2 = __lasx_xvfpickve2gr_s(f0, 0); \
 	a3 = __lasx_xvfpickve2gr_s(f0, 1);
 
-#else
+#elif 1 && defined(USE_LSX)
 #define VINIT \
 	__m128i v3, v4, v5, v6 = __lsx_vreplgr2vr_h(range), vzero = __lsx_vrepli_b(0); \
 	__m128 f0, f1, s0 = (__m128)vzero, s1 = s0, s2 = s0, s3 = s0;
@@ -1070,15 +1099,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	f0 = __lsx_vfadd_s(f0, (__m128)__lsx_vpermi_w(f0, f0, 0xee)); \
 	a2 = __lsx_vfpickve2gr_s(f0, 0); \
 	a3 = __lsx_vfpickve2gr_s(f0, 1);
-#endif
 
 #elif 1 && defined(USE_NEON)
-#define VINITD uint8x8_t i0, i1, i2;
-#define VDIFF(i) vst1q_u16((uint16_t*)temp + (i) * n, vsubl_u8(i0, i1));
-#define VLDPIX(j, p) i##j = vld1_u8(p);
-#define VRIGHT(a, b) i##a = vext_u8(i##b, i##b, 1);
-#define VCOPY(a, b) i##a = i##b;
-
 #define VINIT \
 	int16x8_t v0, v5; uint16x8_t v6 = vdupq_n_u16(range); \
 	float32x4_t f0, f1, s0 = vdupq_n_f32(0), s1 = s0, s2 = s0, s3 = s0;
@@ -1188,12 +1210,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	a3 = _mm_cvtss_f32(_mm_shuffle_ps(f0, f0, 0x55));
 
 #elif !defined(NO_SIMD) // vector code simulation
-#define VINITD JSAMPLE *p0, *p1, *p2;
-#define VDIFF(i) for (x = 0; x < n; x++) temp[(i) * n + x] = p0[x] - p1[x];
-#define VLDPIX(i, a) p##i = a;
-#define VRIGHT(a, b) p##a = p##b + 1;
-#define VCOPY(a, b) p##a = p##b;
-
 #define VINIT int j; float a0, a1, f0, sum[DCTSIZE * 2]; \
 	for (j = 0; j < n * 2; j++) sum[j] = 0;
 
@@ -1231,13 +1247,37 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 				border[y + n] = buf[y * n + n - 1];
 			}
 
-#ifndef VINITD
-// same for SSE2, AVX2, AVX512
+#if 1 && defined(USE_RVV)
+#define VINITD vuint8mf2_t v0, v1, v2;
+#define VDIFF(i) __riscv_vse16_v_u16m1((uint16_t*)temp + (i) * n, \
+		__riscv_vwsubu_vv_u16m1(v0, v1, 8), 8);
+#define VLDPIX(j, p) v##j = __riscv_vle8_v_u8mf2(p, 8);
+#define VRIGHT(a, b) v##a = __riscv_vslidedown_vx_u8mf2(v##b, 1, 8);
+#define VCOPY(a, b) v##a = v##b;
+#elif 1 && defined(USE_LSX) // same for LSX, LASX
+#define VINITD __m128i v0, v1, v2, vzero = __lsx_vrepli_b(0);
+#define VDIFF(i) __lsx_vst(__lsx_vsub_h(v0, v1), &temp[(i) * n], 0);
+#define VLDPIX(i, p) v##i = __lsx_vilvl_b(vzero, __lsx_vldrepl_d(p, 0));
+#define VRIGHT(a, b) v##a = __lsx_vbsrl_v(v##b, 2);
+#define VCOPY(a, b) v##a = v##b;
+#elif 1 && defined(USE_NEON)
+#define VINITD uint8x8_t i0, i1, i2;
+#define VDIFF(i) vst1q_u16((uint16_t*)temp + (i) * n, vsubl_u8(i0, i1));
+#define VLDPIX(j, p) i##j = vld1_u8(p);
+#define VRIGHT(a, b) i##a = vext_u8(i##b, i##b, 1);
+#define VCOPY(a, b) i##a = i##b;
+#elif 1 && defined(__SSE2__) // same for SSE2, AVX2, AVX512
 #define VINITD __m128i v0, v1, v2;
 #define VDIFF(i) _mm_storeu_si128((__m128i*)&temp[(i) * n], _mm_sub_epi16(v0, v1));
 #define VLDPIX(i, p) v##i = _mm_cvtepu8_epi16(_mm_loadl_epi64((__m128i*)(p)));
 #define VRIGHT(a, b) v##a = _mm_bsrli_si128(v##b, 2);
 #define VCOPY(a, b) v##a = v##b;
+#else
+#define VINITD JSAMPLE *p0, *p1, *p2;
+#define VDIFF(i) for (x = 0; x < n; x++) temp[(i) * n + x] = p0[x] - p1[x];
+#define VLDPIX(i, a) p##i = a;
+#define VRIGHT(a, b) p##a = p##b + 1;
+#define VCOPY(a, b) p##a = p##b;
 #endif
 
 			{
