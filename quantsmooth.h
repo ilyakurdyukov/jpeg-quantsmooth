@@ -2131,8 +2131,7 @@ static void upsample_row(int w1, int y0, int y1,
 		{
 #define USE_RGATHER 0
 #if USE_RGATHER
-		static const uint32_t idx[] = { 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 };
-		vuint32m4_t vidx = __riscv_vle32_v_u32m4(idx, 16);
+		vuint16m2_t vidx = __riscv_vsrl_vx_u16m2(__riscv_vid_v_u16m2(16), 1, 16);
 #endif
 		SET_VXRM(2); // rdn
 		for (y = 0; y < y1; y++) {
@@ -2148,16 +2147,16 @@ static void upsample_row(int w1, int y0, int y1,
 #if !USE_RGATHER
 #define M1(f0, q0) { \
 	vuint32m2_t t0 = __riscv_vreinterpret_v_f32m2_u32m2(f0); \
-	vuint64m4_t t1 = __riscv_vsll_vx_u64m4(__riscv_vzext_vf2_u64m4(t0, 8), 32, 8); \
+	/* __riscv_vwaddu_wv_u64m4(__riscv_vsll_vx_u64m4(__riscv_vzext_vf2_u64m4(t0, 8), 32, 8), t0, 8) */ \
+	vuint64m4_t t1 = __riscv_vwmaccu_vx_u64m4(__riscv_vwaddu_vv_u64m4(t0, t0, 8), ~0, t0, 8); \
 	/* I can see them thinking: "Why would anyone need __riscv_vreinterpret_v_u64m4_f32m4?" */ \
-	q0 = __riscv_vreinterpret_v_u32m4_f32m4( \
-			__riscv_vreinterpret_v_u64m4_u32m4(__riscv_vwaddu_wv_u64m4(t1, t0, 8))); }
-#else // And yet I don't like it.
+	q0 = __riscv_vreinterpret_v_u32m4_f32m4(__riscv_vreinterpret_v_u64m4_u32m4(t1)); }
+#else // And yet I don't like it. This is a slow instruction.
 #define M1(f0, q0) \
-	q0 = __riscv_vrgather_vv_f32m4(__riscv_vlmul_ext_v_f32m2_f32m4(f0), vidx, 16);
+	q0 = __riscv_vrgatherei16_vv_f32m4(__riscv_vlmul_ext_v_f32m2_f32m4(f0), vidx, 16);
 #endif
 #undef USE_RGATHER
-			M1(f0, q0) M1(f3, q1) // zip
+			M1(f0, q0) M1(f3, q1)
 #undef M1
 #define M2(v4, y) \
 	v5 = __riscv_vzext_vf2_u16m2(__riscv_vle8_v_u8m1(&p1[(y) * stride1], 16), 16); \

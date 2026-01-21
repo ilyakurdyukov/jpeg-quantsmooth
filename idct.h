@@ -58,9 +58,9 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 
 #define M3 \
 	z2 = M1(2); z3 = M1(6); \
-	z1 = MUL(ADD(z2, z3), SET1(FIX_0_541196100)); \
-	tmp2 = SUB(z1, MUL(z3, SET1(FIX_1_847759065))); \
-	tmp3 = ADD(z1, MUL(z2, SET1(FIX_0_765366865))); \
+	z1 = MULI(ADD(z2, z3), FIX_0_541196100); \
+	tmp2 = SUB(z1, MULI(z3, FIX_1_847759065)); \
+	tmp3 = ADD(z1, MULI(z2, FIX_0_765366865)); \
 	z2 = M1(0); z3 = M1(4); \
 	tmp0 = SHL(ADD(z2, z3), CONST_BITS); \
 	tmp1 = SHL(SUB(z2, z3), CONST_BITS); \
@@ -69,15 +69,15 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	tmp0 = M1(7); tmp1 = M1(5); tmp2 = M1(3); tmp3 = M1(1); \
 	z1 = ADD(tmp0, tmp3); z2 = ADD(tmp1, tmp2); \
 	z3 = ADD(tmp0, tmp2); z4 = ADD(tmp1, tmp3); \
-	z5 = MUL(ADD(z3, z4), SET1(FIX_1_175875602)); \
-	tmp0 = MUL(tmp0, SET1(FIX_0_298631336)); \
-	tmp1 = MUL(tmp1, SET1(FIX_2_053119869)); \
-	tmp2 = MUL(tmp2, SET1(FIX_3_072711026)); \
-	tmp3 = MUL(tmp3, SET1(FIX_1_501321110)); \
-	z1 = MUL(z1, SET1(FIX_0_899976223)); \
-	z2 = MUL(z2, SET1(FIX_2_562915447)); \
-	z3 = MUL(z3, SET1(FIX_1_961570560)); \
-	z4 = MUL(z4, SET1(FIX_0_390180644)); \
+	z5 = MULI(ADD(z3, z4), FIX_1_175875602); \
+	tmp0 = MULI(tmp0, FIX_0_298631336); \
+	tmp1 = MULI(tmp1, FIX_2_053119869); \
+	tmp2 = MULI(tmp2, FIX_3_072711026); \
+	tmp3 = MULI(tmp3, FIX_1_501321110); \
+	z1 = MULI(z1, FIX_0_899976223); \
+	z2 = MULI(z2, FIX_2_562915447); \
+	z3 = MULI(z3, FIX_1_961570560); \
+	z4 = MULI(z4, FIX_0_390180644); \
 	z3 = SUB(z5, z3); z4 = SUB(z5, z4); \
 	tmp0 = ADD(tmp0, SUB(z3, z1)); \
 	tmp1 = ADD(tmp1, SUB(z4, z2)); \
@@ -88,8 +88,40 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 	M2(2, ADD(tmp12, tmp1)) M2(5, SUB(tmp12, tmp1)) \
 	M2(3, ADD(tmp13, tmp0)) M2(4, SUB(tmp13, tmp0))
 
+#define MULI(a, b) MUL(a, SET1(b))
 //------------------------------------------------------------------------------
-#if 1 && defined(USE_LASX)
+#if 1 && defined(USE_RVV)
+	vint32m2_t tmp0, tmp1, tmp2, tmp3;
+	vint32m2_t tmp10, tmp11, tmp12, tmp13;
+	vint32m2_t z1, z2, z3, z4, z5;
+	int32_t workspace[DCTSIZE2] ALIGN(32);
+
+#undef MULI
+#define ADD(a, b) __riscv_vadd_vv_i32m2(a, b, 8)
+#define SUB(a, b) __riscv_vsub_vv_i32m2(a, b, 8)
+#define MULI(a, b) __riscv_vmul_vx_i32m2(a, b, 8)
+#define SHL(a, b) __riscv_vsll_vx_i32m2(a, b, 8)
+
+#define M1(i) __riscv_vsext_vf2_i32m2(__riscv_vle16_v_i16m1(coef_block + i * DCTSIZE, 8), 8)
+#define M2(i, tmp) __riscv_vsse32_v_i32m2(workspace + i, 8 * sizeof(int32_t), \
+		__riscv_vsra_vx_i32m2(__riscv_vadd_vx_i32m2(tmp, 1 << (CONST_BITS-PASS1_BITS-1), 8), \
+		CONST_BITS-PASS1_BITS, 8), 8);
+	M3
+#undef M1
+#undef M2
+
+	SET_VXRM(2); // rdn
+
+#define M1(i) __riscv_vle32_v_i32m2(workspace + i * DCTSIZE, 8)
+/* This macro could win some obfuscated code contest. */
+#define M2(i, tmp) __riscv_vsse8_v_u8mf2(outptr + i, stride, __riscv_vnclipu_wx_u8mf2( \
+		__riscv_vnclipu_wx_u16m1(__riscv_vreinterpret_v_i32m2_u32m2(__riscv_vmax_vx_i32m2( \
+		__riscv_vsra_vx_i32m2(__riscv_vadd_vx_i32m2(tmp, (256+1) << (CONST_BITS+PASS1_BITS+3-1), 8), \
+		CONST_BITS+PASS1_BITS+3, 8), 0, 8)), 0, RVV_VXRM(RDN) 8), 0, RVV_VXRM(RDN) 8), 8);
+	M3
+#undef M1
+#undef M2
+#elif 1 && defined(USE_LASX)
 	__m256i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256i tmp0, tmp1, tmp2, tmp3;
 	__m256i tmp10, tmp11, tmp12, tmp13;
@@ -155,7 +187,7 @@ x3 = __lasx_xvilvh_w(t1, t0);
 #undef M1
 //------------------------------------------------------------------------------
 #elif 1 && defined(USE_LSX)
-	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
+	int ctr; __m128i *wsptr, workspace[DCTSIZE * 2] ALIGN(16);
 
 	__m128i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m128i tmp0, tmp1, tmp2, tmp3;
@@ -219,7 +251,7 @@ x3 = __lsx_vilvh_w(t1, t0);
 	}
 //------------------------------------------------------------------------------
 #elif 1 && defined(USE_NEON)
-	int ctr; int32x4_t *wsptr, workspace[DCTSIZE2] ALIGN(16);
+	int ctr; int32x4_t *wsptr, workspace[DCTSIZE * 2] ALIGN(16);
 
 	int32x4_t tmp0, tmp1, tmp2, tmp3;
 	int32x4_t tmp10, tmp11, tmp12, tmp13;
@@ -247,8 +279,8 @@ x3 = __lsx_vilvh_w(t1, t0);
 #define IDCT_FIX_2_562915447 vget_high_s32(t3), 0
 #define IDCT_FIX_3_072711026 vget_high_s32(t3), 1
 
-#define MUL(a, b) vmulq_lane_s32(a, b)
-#define SET1(a) IDCT_##a
+#undef MULI
+#define MULI(a, b) vmulq_lane_s32(a, IDCT_##b)
 #else
 #define MUL vmulq_s32
 #define SET1 vdupq_n_s32
@@ -368,7 +400,7 @@ x3 = _mm256_unpackhi_epi32(t0, t1);
 #endif
 //------------------------------------------------------------------------------
 #elif 1 && defined(USE_SSE2)
-	int ctr; __m128i *wsptr, workspace[DCTSIZE2] ALIGN(16);
+	int ctr; __m128i *wsptr, workspace[DCTSIZE * 2] ALIGN(16);
 
 	__m128i v0, v1, v2, v3, v4, v5, v6, v7, t0, t1, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m128i tmp0, tmp1, tmp2, tmp3;
@@ -501,6 +533,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #endif
 
 #undef M3
+#undef MULI
 #undef ADD
 #undef SUB
 #undef MUL
@@ -574,22 +607,42 @@ static void fdct_float(float *in, float *out) {
 	z1 = ADD(t0, t3); z4 = SUB(t0, t3); \
 	z2 = ADD(t1, t2); z3 = SUB(t1, t2); \
 	M2(0, ADD(z1, z2)) M2(4, SUB(z1, z2)) \
-	z1 = MUL((ADD(z3, z4)), SET1(0.541196100f)); \
-	M2(2, ADD(z1, MUL(z4, SET1(0.765366865f)))) \
-	M2(6, SUB(z1, MUL(z3, SET1(1.847759065f)))) \
+	z1 = MULI(ADD(z3, z4), 0.541196100f); \
+	M2(2, ADD(z1, MULI(z4, 0.765366865f))) \
+	M2(6, SUB(z1, MULI(z3, 1.847759065f))) \
 	z1 = ADD(t4, t7); z2 = ADD(t5, t6); \
 	z3 = ADD(t4, t6); z4 = ADD(t5, t7); \
-	z5 = MUL(ADD(z3, z4), SET1(1.175875602f)); \
-	t4 = MUL(t4, SET1(0.298631336f)); t5 = MUL(t5, SET1(2.053119869f)); \
-	t6 = MUL(t6, SET1(3.072711026f)); t7 = MUL(t7, SET1(1.501321110f)); \
-	z1 = MUL(z1, SET1(0.899976223f)); z2 = MUL(z2, SET1(2.562915447f)); \
-	z3 = SUB(MUL(z3, SET1(1.961570560f)), z5); \
-	z4 = SUB(MUL(z4, SET1(0.390180644f)), z5); \
+	z5 = MULI(ADD(z3, z4), 1.175875602f); \
+	t4 = MULI(t4, 0.298631336f); t5 = MULI(t5, 2.053119869f); \
+	t6 = MULI(t6, 3.072711026f); t7 = MULI(t7, 1.501321110f); \
+	z1 = MULI(z1, 0.899976223f); z2 = MULI(z2, 2.562915447f); \
+	z3 = SUB(MULI(z3, 1.961570560f), z5); \
+	z4 = SUB(MULI(z4, 0.390180644f), z5); \
 	M2(7, SUB(t4, ADD(z1, z3))) M2(5, SUB(t5, ADD(z2, z4))) \
 	M2(3, SUB(t6, ADD(z2, z3))) M2(1, SUB(t7, ADD(z1, z4)))
 
+#define MULI(a, b) MUL(a, SET1(b))
 //------------------------------------------------------------------------------
-#if 1 && defined(USE_LASX)
+#if 1 && defined(USE_RVV)
+	vfloat32m2_t t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
+
+#undef MULI
+#define ADD(a, b) __riscv_vfadd_vv_f32m2(a, b, 8)
+#define SUB(a, b) __riscv_vfsub_vv_f32m2(a, b, 8)
+#define MULI(a, b) __riscv_vfmul_vf_f32m2(a, b, 8)
+
+#define M1(i) __riscv_vle32_v_f32m2(in + i * DCTSIZE, 8)
+#define M2(i, t) __riscv_vsse32_v_f32m2(out + i, 8 * sizeof(float), t, 8);
+	M3
+#undef M1
+#undef M2
+
+#define M1(i) __riscv_vle32_v_f32m2(out + i * DCTSIZE, 8)
+#define M2(i, t) __riscv_vsse32_v_f32m2(out + i, 8 * sizeof(float), MULI(t, 0.125f), 8);
+	M3
+#undef M1
+#undef M2
+#elif 1 && defined(USE_LASX)
 	__m256 v0, v1, v2, v3, v4, v5, v6, v7, x0, x1, x2, x3, x4, x5, x6, x7;
 	__m256 t0, t1, t2, t3, t4, t5, t6, t7, z1, z2, z3, z4, z5;
 
@@ -856,6 +909,7 @@ x3 = _mm_unpackhi_ps(t0, t1);
 #undef M2
 #endif
 #undef M3
+#undef MULI
 #undef ADD
 #undef SUB
 #undef MUL
