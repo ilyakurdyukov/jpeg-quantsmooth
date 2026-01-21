@@ -202,6 +202,7 @@ LSX_FLOAT_HACKS(__lasx_xv, __m256)
 #define SET_VXRM(x)
 #define RVV_VXRM(x) __RISCV_VXRM_##x,
 #endif
+#define RVV_VDIV 0
 #endif
 
 #endif // NO_SIMD
@@ -319,11 +320,19 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		for (x = 0; x < DCTSIZE2; x += vl) {
 			vint16m1_t v0, v1, v2, v3; vfloat32m2_t f4, f0;
 			v0 = __riscv_vle16_v_i16m1(&coef[x], vl);
+#if RVV_VDIV
+			v1 = __riscv_vle16_v_i16m1((int16_t*)&quantval[x], vl); // div
+			v3 = __riscv_vsra_vx_i16m1(v1, 1, vl); // d1
+			v2 = __riscv_vsra_vx_i16m1(v0, 15, vl);
+			v3 = __riscv_vsub_vv_i16m1(__riscv_vxor_vv_i16m1(v3, v2, vl), v2, vl);
+			v2 = __riscv_vdiv_vv_i16m1(__riscv_vadd_vv_i16m1(v3, v0, vl), v1, vl);
+#else
 			v2 = __riscv_vle16_v_i16m1((int16_t*)&quantval[x + DCTSIZE2], vl); // a0
 			v3 = __riscv_vadd_vv_i16m1(__riscv_vmulh_vv_i16m1(v2, v0, vl), v0, vl);
 			v2 = __riscv_vle16_v_i16m1((int16_t*)&quantval[x + DCTSIZE2 * 2], vl); // qshr
 			v1 = __riscv_vle16_v_i16m1((int16_t*)&quantval[x], vl); // div
 			v2 = __riscv_vsmul_vv_i16m1(__riscv_vneg_v_i16m1(v3, vl), v2, RVV_VXRM(RNU) vl);
+#endif
 			v0 = __riscv_vmul_vv_i16m1(v2, v1, vl); // a0
 
 			f4 = __riscv_vle32_v_f32m2(&buf[x], vl);
@@ -555,8 +564,8 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			h0 = __riscv_vle8_v_u8mf2(&image2[y * stride], 8);
 			h1 = __riscv_vle8_v_u8mf2(&image[y * stride], 8);
 			// sumA = __riscv_vwaddu_vx_u16m1(h0, 0, 8);
-			sumA = __riscv_vwcvtu_x_x_v_u16m1(h0, 8);
-			sumB = __riscv_vwcvtu_x_x_v_u16m1(h1, 8);
+			sumA = __riscv_vzext_vf2_u16m1(h0, 8);
+			sumB = __riscv_vzext_vf2_u16m1(h1, 8);
 			sumAA = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h0, 8), 8);
 			sumAB = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h1, 8), 8);
 			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
@@ -574,7 +583,7 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			scale = __riscv_vfmerge_vfm_f32m2(scale, 0, __riscv_vmnot_m_b16(mask, 8), 8);
 			scale = __riscv_vfmax_vf_f32m2(scale, -16.0f, 8);
 			scale = __riscv_vfmin_vf_f32m2(scale, 16.0f, 8);
-			v0 = __riscv_vwcvtu_x_x_v_u16m1(
+			v0 = __riscv_vzext_vf2_u16m1(
 					__riscv_vle8_v_u8mf2(&image2[y * stride], 8), 8);
 			v0 = __riscv_vsll_vx_u16m1(v0, 4, 8);
 			v5 = __riscv_vfcvt_f_x_v_f32m2(__riscv_vreinterpret_v_u32m2_i32m2(
@@ -894,7 +903,39 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 			range = roundf(range);
 		}
 
-#if 1 && defined(USE_LASX)
+#if 1 && defined(USE_RVV)
+		for (y = 0; y < n; y++) {
+			vuint8mf2_t i0, i1; vint16m1_t v4; vbool16_t mask;
+			vuint16m1_t v5, v6 = __riscv_vmv_v_x_u16m1(range, 8);
+			vfloat32m2_t f0, f1, s0 = __riscv_vfmv_v_f_f32m2(0, 8), s1 = s0;
+			i0 = __riscv_vle8_v_u8mf2(&image[y * stride], 8);
+#define M1(i, x, y) \
+	i1 = __riscv_vle8_v_u8mf2(&image[(y) * stride + x], 8); \
+	v4 = __riscv_vreinterpret_v_u16m1_i16m1(__riscv_vwsubu_vv_u16m1(i0, i1, 8)); \
+	v5 = __riscv_vreinterpret_v_i16m1_u16m1( \
+			__riscv_vmax_vv_i16m1(v4, __riscv_vneg_v_i16m1(v4, 8), 8)); \
+	v5 = __riscv_vssubu_vv_u16m1(v6, v5, 8); \
+	f0 = __riscv_vfwcvt_f_xu_v_f32m2(v5, 8); \
+	f0 = __riscv_vfmul_vv_f32m2(f0, f0, 8); \
+	f1 = __riscv_vfmul_vf_f32m2(f0, c##i, 8); \
+	f0 = __riscv_vfmul_vv_f32m2(f0, __riscv_vfwcvt_f_x_v_f32m2(v4, 8), 8); \
+	s0 = __riscv_vfmacc_vv_f32m2(s0, f0, f1, 8); \
+	s1 = __riscv_vfmacc_vv_f32m2(s1, f1, f1, 8);
+			M1(1, -1, y-1) M1(0, 0, y-1) M1(1, 1, y-1)
+			M1(0, -1, y)                 M1(0, 1, y)
+			M1(1, -1, y+1) M1(0, 0, y+1) M1(1, 1, y+1)
+#undef M1
+#undef M2
+			v5 = __riscv_vzext_vf2_u16m1(i0, 8);
+			mask = __riscv_vmfne_vf_f32m2_b16(s1, 0, 8);
+			f0 = __riscv_vfdiv_vv_f32m2_m(mask, s0, s1, 8);
+			f0 = __riscv_vfmerge_vfm_f32m2(f0, 0, __riscv_vmnot_m_b16(mask, 8), 8);
+			f1 = __riscv_vfwcvt_f_xu_v_f32m2(v5, 8);
+			f0 = __riscv_vfsub_vv_f32m2(f1, f0, 8);
+			f0 = __riscv_vfsub_vf_f32m2(f0, CENTERJSAMPLE, 8);
+			__riscv_vse32_v_f32m2(fbuf + y * n, f0, 8);
+		}
+#elif 1 && defined(USE_LASX)
 		__m256i v6 = __lasx_xvreplgr2vr_h(range), vzero = __lasx_xvrepli_b(0);
 		__m256 vone = __lasx_xvfreplgr2vr_s(1.0f);
 		__m256 vcenter = __lasx_xvfreplgr2vr_s(CENTERJSAMPLE);
@@ -1501,11 +1542,19 @@ end:
 		for (k = 0; k < DCTSIZE2; k += vl) {
 			vint16m1_t v0, v1, v2, v3;
 			v0 = __riscv_vle16_v_i16m1(&coef[k], vl);
+#if RVV_VDIV
+			v1 = __riscv_vle16_v_i16m1((int16_t*)&quantval[k], vl); // div
+			v3 = __riscv_vsra_vx_i16m1(v1, 1, vl); // d1
+			v2 = __riscv_vsra_vx_i16m1(v0, 15, vl);
+			v3 = __riscv_vsub_vv_i16m1(__riscv_vxor_vv_i16m1(v3, v2, vl), v2, vl);
+			v2 = __riscv_vdiv_vv_i16m1(__riscv_vadd_vv_i16m1(v3, v0, vl), v1, vl);
+#else
 			v2 = __riscv_vle16_v_i16m1((int16_t*)&quantval[k + DCTSIZE2], vl); // a0
 			v3 = __riscv_vadd_vv_i16m1(__riscv_vmulh_vv_i16m1(v2, v0, vl), v0, vl);
 			v2 = __riscv_vle16_v_i16m1((int16_t*)&quantval[k + DCTSIZE2 * 2], vl); // qshr
 			v1 = __riscv_vle16_v_i16m1((int16_t*)&quantval[k], vl); // div
 			v2 = __riscv_vsmul_vv_i16m1(__riscv_vneg_v_i16m1(v3, vl), v2, RVV_VXRM(RNU) vl);
+#endif
 			v2 = __riscv_vmul_vv_i16m1(v2, v1, vl);
 			__riscv_vse16_v_i16m1(&orig[k], v2, vl);
 			s0 = __riscv_vwmacc_vv_i32m2(s0, v0, v2, vl);
@@ -1802,8 +1851,8 @@ static void upsample_row(int w1, int y0, int y1,
 			h0 = __riscv_vle8_v_u8mf2(&image2[y * stride], 8);
 			h1 = __riscv_vle8_v_u8mf2(&image[y * stride], 8);
 			// sumA = __riscv_vwaddu_vx_u16m1(h0, 0, 8);
-			sumA = __riscv_vwcvtu_x_x_v_u16m1(h0, 8);
-			sumB = __riscv_vwcvtu_x_x_v_u16m1(h1, 8);
+			sumA = __riscv_vzext_vf2_u16m1(h0, 8);
+			sumB = __riscv_vzext_vf2_u16m1(h1, 8);
 			sumAA = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h0, 8), 8);
 			sumAB = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h1, 8), 8);
 			M2 M1(0, -1) M1(-1, 0) M1(1, 0) M1(0, 1)
@@ -2078,7 +2127,49 @@ static void upsample_row(int w1, int y0, int y1,
 
 		// faster case for 4:2:0
 		if (1 && !((ws - 2) | (hs - 2)))
-#if 1 && defined(USE_LASX)
+#if 1 && defined(USE_RVV)
+		{
+#define USE_RGATHER 0
+#if USE_RGATHER
+		static const uint32_t idx[] = { 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7 };
+		vuint32m4_t vidx = __riscv_vle32_v_u32m4(idx, 16);
+#endif
+		SET_VXRM(2); // rdn
+		for (y = 0; y < y1; y++) {
+			vuint16m1_t v0, v1; vuint16m2_t v4, v5, v6;
+			vfloat32m2_t f0, f2, f3; vfloat32m4_t q0, q1, q2;
+			v0 = __riscv_vzext_vf2_u16m1(__riscv_vle8_v_u8mf2(&image[y * stride], 8), 8);
+			v1 = __riscv_vzext_vf2_u16m1(__riscv_vle8_v_u8mf2(&image2[y * stride], 8), 8);
+			f2 = __riscv_vfwcvt_f_xu_v_f32m2(v0, 8);
+			f3 = __riscv_vfwcvt_f_xu_v_f32m2(v1, 8);
+			f0 = __riscv_vle32_v_f32m2(&fbuf[y * n], 8); // scale
+			f2 = __riscv_vfadd_vf_f32m2(f2, 0.5f, 8);
+			f3 = __riscv_vfnmsub_vv_f32m2(f3, f0, f2, 8); // c - a * b, offset
+#if !USE_RGATHER
+#define M1(f0, q0) { \
+	vuint32m2_t t0 = __riscv_vreinterpret_v_f32m2_u32m2(f0); \
+	vuint64m4_t t1 = __riscv_vsll_vx_u64m4(__riscv_vzext_vf2_u64m4(t0, 8), 32, 8); \
+	/* I can see them thinking: "Why would anyone need __riscv_vreinterpret_v_u64m4_f32m4?" */ \
+	q0 = __riscv_vreinterpret_v_u32m4_f32m4( \
+			__riscv_vreinterpret_v_u64m4_u32m4(__riscv_vwaddu_wv_u64m4(t1, t0, 8))); }
+#else // And yet I don't like it.
+#define M1(f0, q0) \
+	q0 = __riscv_vrgather_vv_f32m4(__riscv_vlmul_ext_v_f32m2_f32m4(f0), vidx, 16);
+#endif
+#undef USE_RGATHER
+			M1(f0, q0) M1(f3, q1) // zip
+#undef M1
+#define M2(v4, y) \
+	v5 = __riscv_vzext_vf2_u16m2(__riscv_vle8_v_u8m1(&p1[(y) * stride1], 16), 16); \
+	q2 = __riscv_vfwcvt_f_xu_v_f32m4(v5, 16); \
+	q2 = __riscv_vfmadd_vv_f32m4(q2, q0, q1, 16); \
+	v4 = __riscv_vfncvt_rtz_xu_f_w_u16m2(q2, 16);
+			M2(v6, y * 2) M2(v4, y * 2 + 1)
+#undef M2
+			__riscv_vse8_v_u8m1(&out[y * 2 * st], __riscv_vnclipu_wx_u8m1(v6, 0, RVV_VXRM(RDN) 16), 16);
+			__riscv_vse8_v_u8m1(&out[y * 2 * st + st], __riscv_vnclipu_wx_u8m1(v4, 0, RVV_VXRM(RDN) 16), 16);
+		} }
+#elif 1 && defined(USE_LASX)
 		{ __m256i vzero = __lasx_xvrepli_b(0);
 		__m256 fhalf = __lasx_xvfreplgr2vr_s(0.5f);
 		for (y = 0; y < y1; y++) {
