@@ -547,6 +547,10 @@ int main(int argc, char **argv) {
 
 	(void) jpeg_read_header(&srcinfo, TRUE);
 	coef_arrays = jpeg_read_coefficients(&srcinfo);
+    if (coef_arrays == NULL) {
+        logfmt(LS ": can't read coefficients\n", progname);
+        return 1;
+    }
 	do_quantsmooth(&srcinfo, coef_arrays, &opts);
 
 	jpeg_copy_critical_parameters(&srcinfo, &dstinfo);
