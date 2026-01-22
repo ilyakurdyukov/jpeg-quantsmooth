@@ -44,6 +44,15 @@ M1(base) M1(rvv)
 
 #include <sys/auxv.h>
 
+#elif defined(__loongarch__)
+M1(base) M1(lsx) M1(lasx)
+#undef M1
+
+#define USE_AUXV 0
+#if USE_AUXV
+#include <sys/auxv.h>
+#endif
+
 #else // x86
 M1(base) M1(sse2) M1(avx2) M1(avx512)
 #undef M1
@@ -77,6 +86,15 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		__asm__ __volatile__("\tcsrr\t%0, vlenb" : "=r"(vlenb));
 		if (vlenb * 8 >= 128) type = 2;
 	}
+#elif defined(__loongarch__)
+#if USE_AUXV
+	long hwcap = getauxval(AT_HWCAP);
+	if (hwcap >> 4 & 1) { type = 2; if (hwcap >> 5 & 1) type = 3; }
+#else
+	long cfg2 = 2;
+	__asm__ __volatile__("\tcpucfg\t%0, %0" : "+r"(cfg2));
+	if (cfg2 >> 6 & 1) { type = 2; if (cfg2 >> 7 & 1) type = 3; }
+#endif
 #else // x86
 	do {
 		int32_t cpuid[4], m, xcr0;
@@ -106,6 +124,9 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		int x = (opts->flags >> JPEGQS_CPU_SHIFT) & JPEGQS_CPU_MASK;
 		if (x) type = x < type ? x : type;
 	}
+#if defined(__loongarch_sx) || defined(__x86_64__)
+	if (type < 2) type = 2;
+#endif
 
 #ifdef WITH_LOG
 	if (opts->flags & JPEGQS_INFO_CPU) {
@@ -116,6 +137,11 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 #define M1(name) return do_quantsmooth_##name(srcinfo, coef_arrays, opts);
 #ifdef __riscv
 	if (type >= 2) M1(rvv)
+#elif defined(__loongarch__)
+	if (type >= 3) M1(lasx)
+#ifndef __loongarch_sx
+	if (type >= 2) M1(lsx)
+#endif
 #else // x86
 #ifdef __x86_64__
 	if (type >= 4) M1(avx512)

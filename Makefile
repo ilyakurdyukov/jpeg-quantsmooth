@@ -25,6 +25,10 @@ RVV_ARCH := rv64gcv
 ifeq ($(SIMD),select)
 ifneq (,$(filter riscv%,$(ARCH)))
 SIMDOBJ := $(patsubst %,jpegqs_%.o,base rvv)
+else ifneq (,$(filter loongarch%,$(ARCH)))
+# Compilers assume that LSX is the baseline for LA64. But is that true?
+#MFLAGS := -mno-lsx
+SIMDOBJ := $(patsubst %,jpegqs_%.o,base lsx lasx)
 else
 SIMDOBJ := $(patsubst %,jpegqs_%.o,base sse2 avx2 avx512)
 endif
@@ -36,7 +40,7 @@ SIMDFLG := -mcpu=native -mtune=native
 else ifneq (,$(filter riscv%,$(ARCH)))
 # Still no -march=native support for RISC-V in 2026!
 # This may work, depending on the compiler and OS:
-#RVV_ARCH=$(shell cat /proc/cpuinfo | sed -n 's/^isa[[:blank:]]*: rv/rv/;T;s/_s.*//g;p;q')
+#RVV_ARCH=$(shell cat /proc/cpuinfo | sed -n 's/^isa[[:blank:]]*: rv/rv/;T;s/_s[^_]*//g;p;q')
 SIMDFLG := -march=$(RVV_ARCH)
 else
 SIMDFLG := -march=native -mtune=native
@@ -170,6 +174,8 @@ SIMDSEL_FLAGS ?= -DTRANSCODE_ONLY -DWITH_LOG
 endif
 
 SIMD_rvv = -DSIMD_NAME=rvv $(CFLAGS_APP) -march=$(RVV_ARCH) -DSIMD_RVV
+SIMD_lasx = -DSIMD_NAME=lasx $(CFLAGS_APP) -mlsx -mlasx -DSIMD_LASX
+SIMD_lsx = -DSIMD_NAME=lsx $(CFLAGS_APP) -mlsx -DSIMD_LSX
 SIMD_avx512 = -DSIMD_NAME=avx512 -mavx512f -mavx512dq -mavx512bw -mfma $(CFLAGS_APP) -DSIMD_AVX512
 SIMD_avx2 = -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2
 SIMD_sse2 = -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2

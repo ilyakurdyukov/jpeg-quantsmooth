@@ -455,6 +455,12 @@ int main(int argc, char **argv) {
 "                      0 - auto, " HELP_SIMD2
 #ifdef __riscv
 #define HELP_SIMD2 "1 - scalar, 2 - vector"
+#elif defined(__loongarch__)
+#ifdef __loongarch_sx
+#define HELP_SIMD2 "2 - LSX, 3 - LASX"
+#else
+#define HELP_SIMD2 "1 - scalar, 2 - LSX, 3 - LASX"
+#endif
 #elif defined(__x86_64__)
 #define HELP_SIMD2 "2 - SSE2, 3 - AVX2, 4 - AVX512"
 #else
