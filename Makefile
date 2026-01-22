@@ -19,14 +19,25 @@ SIMD := native
 MFLAGS := 
 SIMDFLG :=
 SIMDOBJ :=
-SIMD_AVX512 := -mavx512f -mavx512dq -mavx512bw -mfma
+# Why isn't there an option to enable a specific extension, like -march=+v?
+# Why do I have to specify the entire ISA at once? That's insane.
+RVV_ARCH := rv64gcv
 ifeq ($(SIMD),select)
-SIMDOBJ := jpegqs_base.o jpegqs_sse2.o jpegqs_avx2.o jpegqs_avx512.o
+ifneq (,$(filter riscv%,$(ARCH)))
+SIMDOBJ := $(patsubst %,jpegqs_%.o,base rvv)
+else
+SIMDOBJ := $(patsubst %,jpegqs_%.o,base sse2 avx2 avx512)
+endif
 else ifeq ($(SIMD),none)
 SIMDFLG := -DNO_SIMD
 else ifeq ($(SIMD),native)
 ifneq (,$(filter arm% aarch64 ppc% Power\ Macintosh,$(ARCH)))
 SIMDFLG := -mcpu=native -mtune=native
+else ifneq (,$(filter riscv%,$(ARCH)))
+# Still no -march=native support for RISC-V in 2026!
+# This may work, depending on the compiler and OS:
+#RVV_ARCH=$(shell cat /proc/cpuinfo | sed -n 's/^isa[[:blank:]]*: rv/rv/;T;s/_s.*//g;p;q')
+SIMDFLG := -march=$(RVV_ARCH)
 else
 SIMDFLG := -march=native -mtune=native
 endif
@@ -158,31 +169,25 @@ else
 SIMDSEL_FLAGS ?= -DTRANSCODE_ONLY -DWITH_LOG
 endif
 
-jpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx512 $(SIMD_AVX512) $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
-jpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
-jpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2 -c -o $@ $<
-jpegqs_base.o: libjpegqs.c $(SRCDEPS)
-	$(CC) $(SIMDSEL_FLAGS) -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE -c -o $@ $<
+SIMD_rvv = -DSIMD_NAME=rvv $(CFLAGS_APP) -march=$(RVV_ARCH) -DSIMD_RVV
+SIMD_avx512 = -DSIMD_NAME=avx512 -mavx512f -mavx512dq -mavx512bw -mfma $(CFLAGS_APP) -DSIMD_AVX512
+SIMD_avx2 = -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2
+SIMD_sse2 = -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2
+SIMD_base = -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE
+
+jpegqs_%.o: libjpegqs.c $(SRCDEPS)
+	$(CC) $(SIMDSEL_FLAGS) $(SIMD_$(patsubst jpegqs_%.o,%,$@)) -c -o $@ $<
 
 ifeq ($(SIMD),select)
-lib$(APPNAME).a: libjpegqs_base.o libjpegqs_sse2.o libjpegqs_avx2.o libjpegqs_avx512.o
+lib$(APPNAME).a: $(SIMDOBJ:%=lib%)
 endif
 lib$(APPNAME).a: libjpegqs.o
 	$(AR) -rsc $@ $^
 
 libjpegqs.o: libjpegqs.c $(SRCDEPS)
 	$(CC) $(CFLAGS_APP) -c -o $@ $<
-libjpegqs_avx512.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=avx512 $(SIMD_AVX512) $(CFLAGS_APP) -DSIMD_AVX512 -c -o $@ $<
-libjpegqs_avx2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=avx2 -mavx2 -mfma $(CFLAGS_APP) -DSIMD_AVX2 -c -o $@ $<
-libjpegqs_sse2.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=sse2 -msse2 $(CFLAGS_APP) -DSIMD_SSE2 -c -o $@ $<
-libjpegqs_base.o: libjpegqs.c $(SRCDEPS)
-	$(CC) -DSIMD_NAME=base $(CFLAGS_APP) -DSIMD_BASE -c -o $@ $<
+libjpegqs_%.o: libjpegqs.c $(SRCDEPS)
+	$(CC) $(SIMD_$(patsubst libjpegqs_%.o,%,$@)) -c -o $@ $<
 
 $(LIBMINIOMP): miniomp.o
 	$(AR) -rsc $@ $^

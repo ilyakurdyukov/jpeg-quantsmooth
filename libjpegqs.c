@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 Ilya Kurdyukov
+ * Copyright (C) 2020-2026 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth (library)
  *
@@ -38,6 +38,13 @@
 #define QS_ARGS (j_decompress_ptr srcinfo, jvirt_barray_ptr *coef_arrays, jpegqs_control_t *opts)
 
 #define M1(name) int do_quantsmooth_##name QS_ARGS;
+#ifdef __riscv
+M1(base) M1(rvv)
+#undef M1
+
+#include <sys/auxv.h>
+
+#else // x86
 M1(base) M1(sse2) M1(avx2) M1(avx512)
 #undef M1
 
@@ -59,9 +66,18 @@ static inline int64_t xgetbv(int32_t n) {
 	return ((int64_t)edx << 32) | eax;
 }
 #endif
+#endif // x86
 
 JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 	int type = 1;
+#ifdef __riscv
+	long misa = getauxval(AT_HWCAP);
+	if (misa >> 21 & 1) { // V
+		long vlenb;
+		__asm__ __volatile__("\tcsrr\t%0, vlenb" : "=r"(vlenb));
+		if (vlenb * 8 >= 128) type = 2;
+	}
+#else // x86
 	do {
 		int32_t cpuid[4], m, xcr0;
 		get_cpuid(0, 0, cpuid); m = cpuid[0];
@@ -84,6 +100,7 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 		if (!(cpuid[1] & (1 << 30))) break; // AVX512BW
 		type = 4;
 	} while (0);
+#endif
 
 	{
 		int x = (opts->flags >> JPEGQS_CPU_SHIFT) & JPEGQS_CPU_MASK;
@@ -97,6 +114,9 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 #endif
 
 #define M1(name) return do_quantsmooth_##name(srcinfo, coef_arrays, opts);
+#ifdef __riscv
+	if (type >= 2) M1(rvv)
+#else // x86
 #ifdef __x86_64__
 	if (type >= 4) M1(avx512)
 #endif
@@ -104,6 +124,7 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 #ifndef __x86_64__
 	if (type >= 2) M1(sse2)
 #endif
+#endif // x86
 	M1(base)
 #undef M1
 }
@@ -115,7 +136,7 @@ JPEGQS_ATTR int do_quantsmooth QS_ARGS {
 #ifndef SIMD_BASE
 #define NO_HELPERS
 #endif
-#endif
+#endif // SIMD_NAME
 #define JPEGQS_ATTR
 #if !(defined(SIMD_SSE2) && defined(__x86_64__)) && \
 	!(defined(SIMD_AVX512) && !defined(__x86_64__))

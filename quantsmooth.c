@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Ilya Kurdyukov
+ * Copyright (C) 2016-2026 Ilya Kurdyukov
  *
  * This file is part of jpeg quantsmooth
  *
@@ -446,6 +446,22 @@ int main(int argc, char **argv) {
 
 #ifndef WASM
 	if (argc != 3) {
+
+#ifndef SIMD_SELECT
+#define HELP_SIMD
+#else // SIMD_SELECT
+#define HELP_SIMD ", 16 - SIMD type.\n" \
+"  -p, --cpu n       Use to lower the SIMD type if CPU detection fails:\n" \
+"                      0 - auto, " HELP_SIMD2
+#ifdef __riscv
+#define HELP_SIMD2 "1 - scalar, 2 - vector"
+#elif defined(__x86_64__)
+#define HELP_SIMD2 "2 - SSE2, 3 - AVX2, 4 - AVX512"
+#else
+#define HELP_SIMD2 "1 - scalar, 2 - SSE2, 3 - AVX2"
+#endif
+#endif // SIMD_SELECT
+
 		logfmt(
 "JPEG Quant Smooth : " JPEGQS_COPYRIGHT " : " JPEGQS_VERSION "\n"
 "Build date: " __DATE__ "\n"
@@ -463,10 +479,7 @@ int main(int argc, char **argv) {
 "  -i, --info n      Print quantsmooth debug output (default is 15)\n"
 "                      Use the sum of flags: 0 - silent,\n"
 "                      1/2/4 - various information,\n"
-"                      8 - processing time, 16 - SIMD type.\n"
-"  -p, --cpu n       Use to lower the SIMD type if CPU detection fails:\n"
-"                      0 - auto, 1 - scalar, 2 - SSE2, 3 - AVX2, 4 - AVX512.\n"
-"                      (x86 build selects between modes 1-3, x86_64 from 2-4)\n"
+"                      8 - processing time" HELP_SIMD ".\n"
 "\n", progname);
 		return 1;
 	}

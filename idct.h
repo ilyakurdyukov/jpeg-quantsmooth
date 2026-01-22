@@ -1,6 +1,6 @@
 /*
- * idct/fdct SSE2/AVX2/NEON intrinsic optimizations:
- * Copyright (C) 2016-2020 Ilya Kurdyukov
+ * idct/fdct vector intrinsic optimizations:
+ * Copyright (C) 2016-2026 Ilya Kurdyukov
  *
  * contains modified parts of libjpeg:
  * Copyright (C) 1991-1998, Thomas G. Lane
