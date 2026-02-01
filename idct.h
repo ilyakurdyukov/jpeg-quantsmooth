@@ -51,7 +51,7 @@ static JSAMPLE range_limit_static[CENTERJSAMPLE * 8];
 #define FIX_2_562915447  20995       /* FIX(2.562915447) */
 #define FIX_3_072711026  25172       /* FIX(3.072711026) */
 
-#define DESCALE(x,n)  (((x) + (1 << ((n)-1))) >> (n))
+#define DESCALE(x, n)  (((x) + (1 << ((n) - 1))) >> (n))
 #define RANGE_MASK  (MAXJSAMPLE * 4 + 3) /* 2 bits wider than legal samples */
 
 static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) {
@@ -102,22 +102,19 @@ static void idct_islow(JCOEFPTR coef_block, JSAMPROW outptr, JDIMENSION stride) 
 #define MULI(a, b) __riscv_vmul_vx_i32m2(a, b, 8)
 #define SHL(a, b) __riscv_vsll_vx_i32m2(a, b, 8)
 
+	SET_VXRM(0); // rnu
+
 #define M1(i) __riscv_vsext_vf2_i32m2(__riscv_vle16_v_i16m1(coef_block + i * DCTSIZE, 8), 8)
 #define M2(i, tmp) __riscv_vsse32_v_i32m2(workspace + i, 8 * sizeof(int32_t), \
-		__riscv_vsra_vx_i32m2(__riscv_vadd_vx_i32m2(tmp, 1 << (CONST_BITS-PASS1_BITS-1), 8), \
-		CONST_BITS-PASS1_BITS, 8), 8);
+		__riscv_vssra_vx_i32m2(tmp, CONST_BITS-PASS1_BITS, RVV_VXRM(RNU) 8), 8);
 	M3
 #undef M1
 #undef M2
 
-	SET_VXRM(2); // rdn
-
 #define M1(i) __riscv_vle32_v_i32m2(workspace + i * DCTSIZE, 8)
-/* This macro could win some obfuscated code contest. */
-#define M2(i, tmp) __riscv_vsse8_v_u8mf2(outptr + i, stride, __riscv_vnclipu_wx_u8mf2( \
-		__riscv_vnclipu_wx_u16m1(__riscv_vreinterpret_v_i32m2_u32m2(__riscv_vmax_vx_i32m2( \
-		__riscv_vsra_vx_i32m2(__riscv_vadd_vx_i32m2(tmp, (256+1) << (CONST_BITS+PASS1_BITS+3-1), 8), \
-		CONST_BITS+PASS1_BITS+3, 8), 0, 8)), 0, RVV_VXRM(RDN) 8), 0, RVV_VXRM(RDN) 8), 8);
+#define M2(i, tmp) __riscv_vsse8_v_i8mf2((int8_t*)outptr + i, stride, \
+		__riscv_vxor_vx_i8mf2(__riscv_vnclip_wx_i8mf2(__riscv_vnclip_wx_i16m1( \
+		tmp, CONST_BITS+PASS1_BITS+3, RVV_VXRM(RNU) 8), 0, RVV_VXRM(RNU) 8), -128, 8), 8);
 	M3
 #undef M1
 #undef M2
@@ -469,7 +466,6 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 	}
 //------------------------------------------------------------------------------
 #else
-#define NEED_RANGELIMIT
 	int32_t tmp0, tmp1, tmp2, tmp3;
 	int32_t tmp10, tmp11, tmp12, tmp13;
 	int32_t z1, z2, z3, z4, z5;
@@ -508,13 +504,22 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 #undef M2
 
 #define M1(i) wsptr[i]
-#define M2(i, tmp) outptr[i] = range_limit[DESCALE(tmp, CONST_BITS+PASS1_BITS+3) & RANGE_MASK];
+#if 1 // without tables
+	(void)range_limit;
+#define M4(tmp, n) z1 = ((tmp) + ((256+1) << ((n) - 1))) >> (n); \
+	z1 &= ~(z1 >> 31); /* if (z1 < 0) z1 &= 0; */ \
+	z1 |= (255 - z1) >> 31; /* if (z1 > 255) z1 |= ~0; */
+#else
+#define NEED_RANGELIMIT
+#define M4(tmp, n) z1 = range_limit[DESCALE(tmp, n) & RANGE_MASK];
+#endif
+#define M2(i, tmp) M4(tmp, CONST_BITS+PASS1_BITS+3) outptr[i] = z1;
 	wsptr = workspace;
 	for (ctr = 0; ctr < DCTSIZE; ctr++, wsptr += DCTSIZE, outptr += stride) {
 #ifndef NO_ZERO_ROW_TEST
 		if (!(M1(1) | M1(2) | M1(3) | M1(4) | M1(5) | M1(6) | M1(7))) {
 			/* AC terms all zero */
-			JSAMPLE dcval = range_limit[DESCALE(wsptr[0], PASS1_BITS+3) & RANGE_MASK];
+			JSAMPLE dcval; M4(wsptr[0], PASS1_BITS+3) dcval = z1;
 			outptr[0] = dcval;
 			outptr[1] = dcval;
 			outptr[2] = dcval;
@@ -530,6 +535,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 	}
 #undef M1
 #undef M2
+#undef M4
 #endif
 
 #undef M3
@@ -542,7 +548,7 @@ x3 = _mm_unpackhi_epi32(t0, t1);
 }
 #endif // USE_JSIMD
 
-static void range_limit_init() {
+static void range_limit_init(void) {
 	JSAMPLE *t = range_limit_static;
 #ifdef NEED_RANGELIMIT
 	int i, c = CENTERJSAMPLE, m = c * 2;

@@ -69,7 +69,7 @@ struct jpeg_decomp_master {
 // conflict with libjpeg typedef
 #define INT32 INT32_WIN
 #include <windows.h>
-static int64_t get_time_usec() {
+static int64_t get_time_usec(void) {
 	LARGE_INTEGER freq, perf;
 	QueryPerformanceFrequency(&freq);
 	QueryPerformanceCounter(&perf);
@@ -78,7 +78,7 @@ static int64_t get_time_usec() {
 #else
 #include <time.h>
 #include <sys/time.h>
-static int64_t get_time_usec() {
+static int64_t get_time_usec(void) {
 	struct timeval time;
 	gettimeofday(&time, NULL);
 	return time.tv_sec * (int64_t)1000000 + time.tv_usec;
@@ -202,6 +202,39 @@ LSX_FLOAT_HACKS(__lasx_xv, __m256)
 #define SET_VXRM(x)
 #define RVV_VXRM(x) __RISCV_VXRM_##x,
 #endif
+
+#ifdef __riscv_xtheadvector
+// Clang 21.1.8 : doesn't support XTheadVector
+// GCC 15.2.0 -O2 : compiler crashes with ICE
+// GCC 15.2.0 -O1 : jpegqs crashes with SIGILL
+// GCC 16.0.0 -O2 : wrong results
+// GCC 16.0.0 -O1 : finally works
+// Below are workarounds for unsupported intrinsics.
+// Using these also often causes GCC to crash with ICE.
+// The GCC developers have been notified of these issues.
+#define vuint8mf2_t vuint8m1_t
+#define __riscv_vle8_v_u8mf2 __riscv_vle8_v_u8m1
+#define __riscv_vsse8_v_i8mf2 __riscv_vsse8_v_i8m1
+#define __riscv_vxor_vx_i8mf2 __riscv_vxor_vx_i8m1
+#define __riscv_vslidedown_vx_u8mf2 __riscv_vslidedown_vx_u8m1
+#define __riscv_vnclip_wx_i8mf2(v, ...) \
+	__riscv_vnclip_wx_i8m1(__riscv_vlmul_ext_v_i16m1_i16m2(v), __VA_ARGS__)
+#define __riscv_vzext_vf2_u16m1(v, vl) \
+	__riscv_vlmul_trunc_v_u16m2_u16m1(__riscv_vzext_vf2_u16m2(v, vl))
+#define __riscv_vwsubu_vv_u16m1(v0, v1, vl) \
+	__riscv_vlmul_trunc_v_u16m2_u16m1(__riscv_vwsubu_vv_u16m2(v0, v1, vl))
+#define __riscv_vwmulu_vv_u16m1(v0, v1, vl) \
+	__riscv_vlmul_trunc_v_u16m2_u16m1(__riscv_vwmulu_vv_u16m2(v0, v1, vl))
+#define __riscv_vsext_vf2_i32m2 __riscv_vwcvt_x_x_v_i32m2
+#define __riscv_vzext_vf2_u16m2 __riscv_vwcvtu_x_x_v_u16m2
+#define __riscv_vwaddu_wv_u16m1(v0, v1, vl) \
+	__riscv_vadd_vv_u16m1(v0, __riscv_vzext_vf2_u16m1(v1, vl), vl)
+#define RVV_NORTZ 1
+#endif // __riscv_xtheadvector
+#if RVV_NORTZ
+#define __riscv_vfncvt_rtz_xu_f_w_u16m2 __riscv_vfncvt_xu_f_w_u16m2
+#define __riscv_vfncvt_rtz_x_f_w_i16m1 __riscv_vfncvt_x_f_w_i16m1
+#endif
 #define RVV_VDIV 0
 #endif
 
@@ -318,7 +351,7 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 		unsigned vl = __riscv_vsetvl_e16m1(DCTSIZE2);
 		SET_VXRM(0); // rnu
 		for (x = 0; x < DCTSIZE2; x += vl) {
-			vint16m1_t v0, v1, v2, v3; vfloat32m2_t f4, f0;
+			vint16m1_t v0, v1, v2, v3; vfloat32m2_t f4;
 			v0 = __riscv_vle16_v_i16m1(&coef[x], vl);
 #if RVV_VDIV
 			v1 = __riscv_vle16_v_i16m1((int16_t*)&quantval[x], vl); // div
@@ -336,8 +369,10 @@ static void fdct_clamp(float *buf, JCOEFPTR coef, UINT16 *quantval) {
 			v0 = __riscv_vmul_vv_i16m1(v2, v1, vl); // a0
 
 			f4 = __riscv_vle32_v_f32m2(&buf[x], vl);
-			f0 = __riscv_vfsgnj_vv_f32m2(__riscv_vfmv_v_f_f32m2(0.5f, vl), f4, vl);
-			f4 = __riscv_vfadd_vv_f32m2(f4, f0, vl);
+#if !RVV_NORTZ
+			f4 = __riscv_vfadd_vv_f32m2(f4, __riscv_vfsgnj_vv_f32m2(
+					__riscv_vfmv_v_f_f32m2(0.5f, vl), f4, vl), vl);
+#endif
 			v2 = __riscv_vfncvt_rtz_x_f_w_i16m1(f4, vl); // add
 			/* v0 = a0, v1 = div, v2 = add */
 			v3 = __riscv_vadc_vxm_i16m1(v1, -1, __riscv_vmslt_vx_i16m1_b16(v0, 0, vl), vl);
@@ -563,7 +598,6 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 	sumAB = __riscv_vadd_vv_u32m2(sumAB, sumAB, 8);
 			h0 = __riscv_vle8_v_u8mf2(&image2[y * stride], 8);
 			h1 = __riscv_vle8_v_u8mf2(&image[y * stride], 8);
-			// sumA = __riscv_vwaddu_vx_u16m1(h0, 0, 8);
 			sumA = __riscv_vzext_vf2_u16m1(h0, 8);
 			sumB = __riscv_vzext_vf2_u16m1(h1, 8);
 			sumAA = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h0, 8), 8);
@@ -1149,17 +1183,17 @@ static void quantsmooth_block(JCOEFPTR coef, UINT16 *quantval,
 #define VINIT \
 	unsigned vl = __riscv_vsetvl_e16m1(8 * 2), vincr = vl / 8; \
 	vint16m1_t v4; vuint16m1_t v5, v6 = __riscv_vmv_v_x_u16m1(range, vl); \
-	vfloat32m2_t f0, f1, f4, s0 = __riscv_vfmv_v_f_f32m2(0, vl), s1 = s0; \
+	vfloat32m2_t f0, f1, s0 = __riscv_vfmv_v_f_f32m2(0, vl), s1 = s0;
 
 #define VCORE \
 	v4 = __riscv_vle16_v_i16m1(&temp[y * n], vl); \
-	f4 = __riscv_vle32_v_f32m2(tab + y * n, vl); \
+	f1 = __riscv_vle32_v_f32m2(tab + y * n, vl); \
 	v5 = __riscv_vreinterpret_v_i16m1_u16m1( \
 			__riscv_vmax_vv_i16m1(v4, __riscv_vneg_v_i16m1(v4, vl), vl)); \
 	v5 = __riscv_vssubu_vv_u16m1(v6, v5, vl); \
 	f0 = __riscv_vfwcvt_f_xu_v_f32m2(v5, vl); \
 	f0 = __riscv_vfmul_vv_f32m2(f0, f0, vl); \
-	f1 = __riscv_vfmul_vv_f32m2(f0, f4, vl); \
+	f1 = __riscv_vfmul_vv_f32m2(f1, f0, vl); \
 	f0 = __riscv_vfmul_vv_f32m2(f0, __riscv_vfwcvt_f_x_v_f32m2(v4, vl), vl); \
 	s0 = __riscv_vfmacc_vv_f32m2(s0, f0, f1, vl); \
 	s1 = __riscv_vfmacc_vv_f32m2(s1, f1, f1, vl);
@@ -1850,7 +1884,6 @@ static void upsample_row(int w1, int y0, int y1,
 	sumAB = __riscv_vadd_vv_u32m2(sumAB, sumAB, 8);
 			h0 = __riscv_vle8_v_u8mf2(&image2[y * stride], 8);
 			h1 = __riscv_vle8_v_u8mf2(&image[y * stride], 8);
-			// sumA = __riscv_vwaddu_vx_u16m1(h0, 0, 8);
 			sumA = __riscv_vzext_vf2_u16m1(h0, 8);
 			sumB = __riscv_vzext_vf2_u16m1(h1, 8);
 			sumAA = __riscv_vwcvtu_x_x_v_u32m2(__riscv_vwmulu_vv_u16m1(h0, h0, 8), 8);
@@ -2142,7 +2175,9 @@ static void upsample_row(int w1, int y0, int y1,
 			f2 = __riscv_vfwcvt_f_xu_v_f32m2(v0, 8);
 			f3 = __riscv_vfwcvt_f_xu_v_f32m2(v1, 8);
 			f0 = __riscv_vle32_v_f32m2(&fbuf[y * n], 8); // scale
+#if !RVV_NORTZ
 			f2 = __riscv_vfadd_vf_f32m2(f2, 0.5f, 8);
+#endif
 			f3 = __riscv_vfnmsub_vv_f32m2(f3, f0, f2, 8); // c - a * b, offset
 #if !USE_RGATHER
 #define M1(f0, q0) { \
